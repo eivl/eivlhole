@@ -1,3 +1,4 @@
+import os
 from datetime import date
 
 import asyncssh
@@ -264,9 +265,11 @@ async def test_upload_file_gives_up_after_retries(tmp_path):
     f = tmp_path / "f"
     f.write_text("x")
     sleep, calls = no_sleep_factory()
+    s = FakeSftp(fail_times=5)
     with pytest.raises(OSError, match="flaky"):
-        await runner.upload_file(FakeSftp(fail_times=5), f, "/in/f", retries=2, sleep=sleep)
+        await runner.upload_file(s, f, "/in/f", retries=2, sleep=sleep)
     assert calls == [1.0, 2.0]
+    assert "/in/f.part" in s.removed
 
 
 async def test_replace_remote_falls_back_without_posix_rename():
@@ -280,3 +283,74 @@ def test_apply_on_success_move_creates_sent_dir(tmp_path):
     f.write_text("a")
     runner.apply_on_success("move", f)
     assert (tmp_path / "sent" / "a.txt").read_text() == "a" and not f.exists()
+
+
+posix_only = pytest.mark.skipif(
+    os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX permissions and a non-root user",
+)
+
+
+@posix_only
+async def test_run_job_remote_dir_not_writable(ssh_server, client_key, incoming, tmp_path):
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    job = JobConfig(name="j", remote_dir="/incoming/sub", files=[str(f)])
+    cfg = make_config(ssh_server, client_key, job)
+    hist = History(tmp_path / "h.sqlite")
+    incoming.chmod(0o500)
+    try:
+        result = await runner.run_job(
+            "j", cfg, history=hist, today=WEEKDAY, known_hosts=ssh_server.known_hosts
+        )
+    finally:
+        incoming.chmod(0o700)
+    assert result.status == "failed" and result.exit_code == 1
+    assert len(result.outcomes) == 1
+    assert result.outcomes[0].status == "failed" and result.outcomes[0].error
+    run = hist.run(result.run_id)
+    assert run.exit_code == 1 and run.error
+    rows = hist.files_for_run(result.run_id)
+    assert len(rows) == 1 and rows[0].status == "failed"
+    hist.close()
+
+
+@posix_only
+async def test_on_success_failure_keeps_sent(ssh_server, client_key, incoming, tmp_path):
+    src = tmp_path / "out"
+    src.mkdir()
+    f = src / "x.txt"
+    f.write_text("x")
+    (src / "sent").mkdir()
+    job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)], on_success="move")
+    cfg = make_config(ssh_server, client_key, job)
+    (src / "sent").chmod(0o500)
+    try:
+        result = await runner.run_job(
+            "j", cfg, history=None, today=WEEKDAY, known_hosts=ssh_server.known_hosts
+        )
+    finally:
+        (src / "sent").chmod(0o700)
+    assert (incoming / "x.txt").read_text() == "x"
+    o = result.outcomes[0]
+    assert o.status == "sent" and "on_success" in o.error
+    assert result.exit_code == 0 and result.warnings
+
+
+async def test_run_job_duplicate_basenames(ssh_server, client_key, incoming, tmp_path):
+    for d, content in (("a", "first"), ("b", "second")):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "x.txt").write_text(content)
+    job = JobConfig(
+        name="j",
+        remote_dir="/incoming",
+        files=[str(tmp_path / "a" / "x.txt"), str(tmp_path / "b" / "x.txt")],
+    )
+    cfg = make_config(ssh_server, client_key, job)
+    result = await runner.run_job(
+        "j", cfg, history=None, today=WEEKDAY, known_hosts=ssh_server.known_hosts
+    )
+    assert [o.status for o in result.outcomes] == ["sent", "failed"]
+    assert "duplicate remote name" in result.outcomes[1].error
+    assert result.exit_code == 3
+    assert (incoming / "x.txt").read_text() == "first"

@@ -102,6 +102,10 @@ async def upload_file(
             return attempt
         except (OSError, asyncssh.Error) as exc:
             if attempt > retries:
+                try:
+                    await sftp_client.remove(part)
+                except Exception:
+                    pass
                 raise
             delay = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
             log.warning(
@@ -173,6 +177,13 @@ async def run_job(
         FileOutcome(local=f, remote=posixpath.join(job.remote_dir, f.name), status="pending")
         for f in selection.files
     ]
+    first_seen: dict[str, Path] = {}
+    for o in outcomes:
+        if o.remote in first_seen:
+            o.status = "failed"
+            o.error = f"duplicate remote name; already sent from {first_seen[o.remote]}"
+        else:
+            first_seen[o.remote] = o.local
     outcomes += [
         FileOutcome(
             local=Path(m),
@@ -219,16 +230,30 @@ async def run_job(
                                 progress=progress,
                             )
                             o.status = "sent"
-                            apply_on_success(job.on_success, o.local)
                         except (OSError, asyncssh.Error, EivlholeError) as exc:
                             o.status = "failed"
                             o.error = str(exc) or type(exc).__name__
                             log.error("job %s: %s failed: %s", name, o.local, o.error)
-            except EivlholeError as exc:
-                error = str(exc)
+                            continue
+                        try:
+                            apply_on_success(job.on_success, o.local)
+                        except OSError as exc:
+                            msg = f"sent, but on_success '{job.on_success}' failed: {exc}"
+                            o.error = msg
+                            result.warnings.append(msg)
+                            log.warning("job %s: %s: %s", name, o.local, msg)
+            except (EivlholeError, OSError, asyncssh.Error) as exc:
+                error = str(exc) or type(exc).__name__
                 for o in outcomes:
                     if o.status == "pending":
                         o.status, o.error = "failed", error
+    except BaseException as exc:
+        error = error or (str(exc) or type(exc).__name__)
+        raise
+    finally:
+        for o in outcomes:
+            if o.status == "pending":
+                o.status, o.error = "failed", error or "run interrupted"
         for o in outcomes:
             _safe(
                 history,
@@ -254,15 +279,9 @@ async def run_job(
         if error is None and failed:
             error = "; ".join(f"{o.local.name}: {o.error}" for o in failed)
         result.reason = error
-    finally:
         _safe(
             history,
-            lambda h: h.finish_run(
-                run_id,
-                result.status if result.status != "dry-run" else "failed",
-                exit_code=result.exit_code,
-                error=error,
-            ),
+            lambda h: h.finish_run(run_id, result.status, exit_code=result.exit_code, error=error),
         )
     log.info(
         "job %s finished: %s (%d sent, %d failed)",
