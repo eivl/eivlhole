@@ -145,7 +145,7 @@ def _valid_extra(entry: str) -> bool:
     if len(parts) not in (1, 2):
         return False
     for part in parts:
-        if not _DATE_RE.match(part):
+        if not _DATE_RE.fullmatch(part):
             return False
         try:
             date.fromisoformat(part)
@@ -229,7 +229,7 @@ def _parse_job(name: str, data: Any, hosts: dict[str, HostConfig], p: _Problems)
     else:
         _check_keys(sched_raw, ("time", "days"), spath, p)
         schedule.time = _str(sched_raw, "time", spath, p, required=False, default="07:00")
-        if not _TIME_RE.match(schedule.time):
+        if not _TIME_RE.fullmatch(schedule.time):
             p.add(f"{spath}.time", "must be HH:MM (24-hour)")
         schedule.days = [d.lower() for d in _str_list(sched_raw, "days", spath, p)]
         for d in schedule.days:
@@ -311,6 +311,10 @@ def parse_config(data: dict) -> Config:
         for name, raw in jobs_raw.items():
             jobs[name] = _parse_job(name, raw, hosts, p)
 
+    if defaults.host is None:
+        for name, job in jobs.items():
+            if job.host is None:
+                p.add(f"jobs.{name}.host", "required because defaults.host is not set")
     p.raise_if_any()
     return Config(defaults=defaults, hosts=hosts, jobs=jobs)
 

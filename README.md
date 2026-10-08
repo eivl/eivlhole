@@ -44,7 +44,7 @@ sudo UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --index-url https://ARTIFACT
 (or `sudo pip install --index-url ... eivlhole`). Then:
 
 ```
-sudo useradd --system --home-dir /srv/eivlhole/home --shell /usr/sbin/nologin eivlhole
+sudo useradd --system --home-dir /srv/eivlhole/home --shell "$(command -v nologin)" eivlhole
 sudo passwd eivlhole                       # temporary, for key enrolment
 sudo /usr/local/bin/eivlhole server init --root /srv/eivlhole --user eivlhole
 ```
@@ -54,6 +54,21 @@ sudo /usr/local/bin/eivlhole server init --root /srv/eivlhole --user eivlhole
 `ForceCommand internal-sftp -d /home` so that, inside the chroot, the SFTP
 session starts in the service account's home and `eivlhole keys enrol` writes
 the `authorized_keys` file sshd reads.
+
+On PAM-based systems that use `pam_shells` (Arch Linux and derivatives), the
+password login that `keys enrol` needs is refused unless the account's shell
+is listed in `/etc/shells`. Either add it once:
+
+    grep -qx "$(command -v nologin)" /etc/shells || command -v nologin | sudo tee -a /etc/shells
+
+or skip password login entirely: run `eivlhole keys show` on each client and
+append the line to `/srv/eivlhole/home/.ssh/authorized_keys` (directory 0700,
+file 0600, both owned by `eivlhole`).
+
+Scheduled jobs need a delivery directory the service account can write to;
+create it with `--incoming` (repeatable) when you run `server init`, for
+example `--incoming incoming/reports`, and use `remote_dir = "/incoming/reports"`
+in the job.
 
 Password login is only needed while clients run `eivlhole keys enrol`. Once
 every client has enrolled its key:

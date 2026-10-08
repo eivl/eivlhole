@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from eivlhole.errors import EivlholeError
 
 CODES = "codes"
 TRANSFERS = "transfers"
 HOME = "home"
 
 _MODES = {"": 0o755, CODES: 0o733, TRANSFERS: 0o733, HOME: 0o700}
+INCOMING_MODE = 0o750
 
 
 @dataclass
@@ -20,7 +24,13 @@ class InitResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def init_layout(root: Path, *, user: str = "eivlhole", dry_run: bool = False) -> InitResult:
+def init_layout(
+    root: Path,
+    *,
+    user: str = "eivlhole",
+    dry_run: bool = False,
+    incoming: Sequence[str] = (),
+) -> InitResult:
     result = InitResult()
     is_root = os.name == "posix" and os.geteuid() == 0
     for name, mode in _MODES.items():
@@ -41,6 +51,23 @@ def init_layout(root: Path, *, user: str = "eivlhole", dry_run: bool = False) ->
                         result.warnings.append(f"could not chown {path} to {user}: {exc}")
                 else:
                     shutil.chown(path, user="root")
+    for rel in incoming:
+        parts = rel.replace("\\", "/").strip("/").split("/")
+        if rel.startswith(("/", "\\")) or any(part in ("", ".", "..") for part in parts):
+            raise EivlholeError(f"invalid --incoming directory {rel!r}: must be a relative path")
+        path = root.joinpath(*parts)
+        if not path.exists():
+            result.created.append(path)
+            if not dry_run:
+                path.mkdir(parents=True)
+        if dry_run or os.name != "posix":
+            continue
+        os.chmod(path, INCOMING_MODE)
+        if is_root:
+            try:
+                shutil.chown(path, user=user, group=user)
+            except (LookupError, PermissionError) as exc:
+                result.warnings.append(f"could not chown {path} to {user}: {exc}")
     if os.name == "posix" and not is_root:
         result.warnings.append(
             f"not running as root: {root / CODES} and {root / TRANSFERS} should be owned by "
@@ -76,4 +103,8 @@ Match User {user}
 #   drop_root = "/"
 # and root's cron on this host:
 #   0 3 * * * /usr/local/bin/eivlhole server sweep --root {root} --max-age 7d
+# Scheduled jobs deliver into directories created with `--incoming`, e.g.
+#   eivlhole server init --root {root} --incoming incoming/reports
+# and the job's config then uses the chroot-relative path:
+#   remote_dir = "/incoming/reports"
 """

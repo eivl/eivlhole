@@ -2,7 +2,6 @@ import pytest
 
 from eivlhole.config import (
     Config,
-    Defaults,
     HostConfig,
     JobConfig,
     PatternConfig,
@@ -70,11 +69,31 @@ def test_host_for_unknown_raises():
         Config().host_for(None)
 
 
-def test_job_without_host_and_no_default_falls_back_to_defaults():
+def test_job_without_host_and_no_default_is_error():
     data = {"hosts": {"a": {"hostname": "h", "user": "u"}}, "jobs": {"j": {"remote_dir": "/x"}}}
+    with pytest.raises(ConfigError, match="jobs.j.host: required because defaults.host is not set"):
+        parse_config(data)
+
+
+def test_job_without_host_uses_default_when_set():
+    data = {
+        "defaults": {"host": "a"},
+        "hosts": {"a": {"hostname": "h", "user": "u"}},
+        "jobs": {"j": {"remote_dir": "/x"}},
+    }
     cfg = parse_config(data)
-    assert cfg.jobs["j"].host is None
-    assert cfg.defaults == Defaults()
+    assert cfg.jobs["j"].host is None and cfg.host_for(cfg.jobs["j"].host).name == "a"
+
+
+def test_time_and_date_reject_trailing_newline():
+    import copy
+
+    data = copy.deepcopy(FULL)
+    data["jobs"]["weekly-reports"]["schedule"]["time"] = "07:00\n"
+    data["jobs"]["weekly-reports"]["holidays"]["extra"] = ["2026-12-24\n"]
+    with pytest.raises(ConfigError) as info:
+        parse_config(data)
+    assert len(info.value.problems) == 2
 
 
 @pytest.mark.parametrize(

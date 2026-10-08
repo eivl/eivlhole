@@ -195,3 +195,26 @@ async def test_password_auth_offers_no_keys(ssh_server, tmp_path, monkeypatch):
         pass
     assert default_key not in ssh_server.offered
     assert ssh_server.offered == []
+
+
+async def test_connect_times_out_against_silent_listener(client_key, tmp_path, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(client, "CONNECT_TIMEOUT", 0.5)
+
+    async def silent(reader, writer):  # accepts and never speaks SSH
+        await asyncio.sleep(5)
+        writer.close()
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    t = SSHTarget("127.0.0.1", port, "u", client_key)
+    try:
+        with pytest.raises(ConnectError, match="timed out"):
+            async with client.connect(t, known_hosts=tmp_path / "kh"):
+                pass
+        with pytest.raises(ConnectError, match="timed out"):
+            await client.fetch_host_key(t)
+    finally:
+        server.close()
+        await server.wait_closed()

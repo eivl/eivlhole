@@ -60,6 +60,10 @@ def collect_files(paths: Sequence[Path]) -> list[tuple[Path, str]]:
         if rel in seen:
             raise TransferError(f"duplicate name in transfer: {rel}")
         seen.add(rel)
+        try:
+            validate_relpath(rel)
+        except MailboxError as exc:
+            raise TransferError(str(exc)) from exc
     return out
 
 
@@ -271,7 +275,10 @@ async def receive(
         if error is None:
             error = str(exc) or type(exc).__name__
         if current_part is not None:
-            current_part.unlink(missing_ok=True)
+            try:
+                current_part.unlink(missing_ok=True)
+            except OSError as unlink_exc:
+                log.warning("could not remove %s: %s", current_part, unlink_exc)
         if not marked_failed:
             await _mark_interrupted(mailbox, transfer_id, exc)
         raise

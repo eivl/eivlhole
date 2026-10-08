@@ -186,3 +186,13 @@ def test_config_edit_missing_editor(config_dir, monkeypatch):
     monkeypatch.setenv("EDITOR", "no-such-editor-xyz")
     r = runner.invoke(app, ["config", "edit"])
     assert r.exit_code == 1 and "editor not found" in r.output
+
+
+def test_hosts_remove_default_host_used_by_jobs(config_dir, ssh_server):
+    add_host(ssh_server)
+    paths.config_file().write_text(
+        paths.config_file().read_text() + '\n[jobs.j]\nremote_dir = "/x"\n'
+    )
+    r = runner.invoke(app, ["hosts", "remove", "drop"])
+    assert r.exit_code == 1 and "default host" in r.output and "j" in r.output
+    assert "drop" in load_config(paths.config_file()).hosts

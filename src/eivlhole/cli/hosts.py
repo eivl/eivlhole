@@ -102,6 +102,13 @@ def remove(ctx: typer.Context, name: str) -> None:
     users = [j.name for j in cfg.jobs.values() if j.host == name]
     if users:
         raise EivlholeError(f"host '{name}' is used by jobs: {', '.join(users)}")
+    if cfg.defaults.host == name:
+        relying = [j.name for j in cfg.jobs.values() if j.host is None]
+        if relying:
+            raise EivlholeError(
+                f"'{name}' is the default host and these jobs rely on it: "
+                f"{', '.join(relying)}. Set another default first."
+            )
     del cfg.hosts[name]
     if cfg.defaults.host == name:
         cfg.defaults.host = None

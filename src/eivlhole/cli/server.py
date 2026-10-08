@@ -11,6 +11,9 @@ from eivlhole.server import sweep as sweep_mod
 
 server_app = typer.Typer(help="Drop host administration (run on the server).", no_args_is_help=True)
 _ROOT = typer.Option(Path("/srv/eivlhole"), "--root", help="Drop root directory.")
+_INCOMING = typer.Option(
+    [], "--incoming", help="Job delivery directory under the root (repeatable)."
+)
 
 
 @server_app.command("init")
@@ -20,10 +23,11 @@ def init(
     root: Path = _ROOT,
     user: str = typer.Option("eivlhole", "--user", help="Service account name."),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    incoming: list[str] = _INCOMING,
 ) -> None:
     """Create codes/, transfers/ and home/ with the right modes, and print the sshd snippet."""
     get_state(ctx)
-    result = layout.init_layout(root, user=user, dry_run=dry_run)
+    result = layout.init_layout(root, user=user, dry_run=dry_run, incoming=incoming)
     for p in result.created:
         console.print(f"{'would create' if dry_run else 'created'} {p}", markup=False)
     if not result.created:

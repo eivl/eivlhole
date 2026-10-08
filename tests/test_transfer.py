@@ -406,3 +406,14 @@ async def test_receive_cancelled_marks_failed(target, ssh_server, drop, tmp_path
     assert msg is not None and "interrupted" in msg
     assert not (out / "f.txt.part").exists()
     assert not (out / "f.txt").exists()
+
+
+@pytest.mark.parametrize("name", ["aux.c", "a:b.txt", "trailing.", "bad*name"])
+def test_collect_files_rejects_unsafe_names(tmp_path, name):
+    p = tmp_path / name
+    try:
+        p.write_text("x")
+    except OSError:
+        pytest.skip("filesystem cannot create this name")
+    with pytest.raises(TransferError, match="unsafe path"):
+        transfer.collect_files([p])

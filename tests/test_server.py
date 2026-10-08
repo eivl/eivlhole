@@ -244,3 +244,26 @@ def test_sweep_records_other_os_errors(tmp_path, monkeypatch):
     result = sweep.sweep(root, timedelta(days=7))
     assert len(result.errors) == 1 and "Permission denied" in result.errors[0]
     assert broken.exists()
+
+
+def test_init_layout_incoming_dirs(tmp_path):
+    root = tmp_path / "srv"
+    result = layout.init_layout(root, incoming=["incoming/reports", "drop-zone"])
+    assert (root / "incoming" / "reports").is_dir() and (root / "drop-zone").is_dir()
+    assert any(p.name == "reports" for p in result.created)
+    if os.name == "posix":
+        assert (root / "incoming" / "reports").stat().st_mode & 0o777 == 0o750
+    with pytest.raises(EivlholeError, match="incoming"):
+        layout.init_layout(root, incoming=["../escape"])
+    with pytest.raises(EivlholeError, match="incoming"):
+        layout.init_layout(root, incoming=["/abs"])
+
+
+def test_cli_server_init_incoming(tmp_path, config_dir):
+    root = tmp_path / "srv"
+    r = runner.invoke(
+        app, ["server", "init", "--root", str(root), "--incoming", "incoming/reports"]
+    )
+    assert r.exit_code == 0, r.output
+    assert (root / "incoming" / "reports").is_dir()
+    assert 'remote_dir = "/incoming/reports"' in r.output

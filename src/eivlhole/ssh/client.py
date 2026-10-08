@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -15,6 +16,8 @@ from eivlhole.config import HostConfig
 from eivlhole.errors import AuthError, ConnectError, HostKeyError
 
 log = logging.getLogger(__name__)
+
+CONNECT_TIMEOUT = 15.0
 
 
 @dataclass(frozen=True)
@@ -94,7 +97,14 @@ def pin_host_key(
 async def fetch_host_key(target: SSHTarget) -> asyncssh.SSHKey:
     try:
         # config=[]: the tool's own config is the only source of host settings.
-        key = await asyncssh.get_server_host_key(target.hostname, target.port, config=[])
+        key = await asyncio.wait_for(
+            asyncssh.get_server_host_key(target.hostname, target.port, config=[]),
+            timeout=CONNECT_TIMEOUT,
+        )
+    except TimeoutError as exc:
+        raise ConnectError(
+            f"cannot reach {target.label}: timed out after {CONNECT_TIMEOUT:g}s"
+        ) from exc
     except (OSError, asyncssh.Error) as exc:
         raise ConnectError(f"cannot reach {target.label}: {exc}") from exc
     if key is None:
@@ -149,6 +159,7 @@ async def connect(
                 username=target.user,
                 known_hosts=str(kh),
                 config=[],
+                connect_timeout=CONNECT_TIMEOUT,
                 **auth,
             )
             break
@@ -172,6 +183,10 @@ async def connect(
             raise AuthError(
                 f"authentication failed for {target.label}: {exc}. "
                 f"Try `eivlhole keys test` or `eivlhole keys enrol`."
+            ) from exc
+        except TimeoutError as exc:
+            raise ConnectError(
+                f"cannot connect to {target.label}: timed out after {CONNECT_TIMEOUT:g}s"
             ) from exc
         except (OSError, asyncssh.Error) as exc:
             raise ConnectError(f"cannot connect to {target.label}: {exc}") from exc
