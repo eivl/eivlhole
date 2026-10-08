@@ -122,3 +122,72 @@ def test_unreadable_pattern_dir_warns(tmp_path):
         assert len(sel.warnings) == 1 and "cannot read pattern directory" in sel.warnings[0]
     finally:
         locked.chmod(0o700)
+
+
+def test_recursive_skips_sent_dir(tmp_path):
+    d = make_tree(tmp_path)
+    (d / "sent").mkdir()
+    (d / "sent" / "daily.csv").write_text("delivered")
+    (d / "sub" / "sent").mkdir()
+    (d / "sub" / "sent" / "daily-old.csv").write_text("delivered")
+    job = JobConfig(
+        name="j",
+        remote_dir="/x",
+        patterns=[PatternConfig(dir=str(d), regex=r"daily.*\.csv", recursive=True)],
+    )
+    sel = select_files(job)
+    assert [p.name for p in sel.files] == [
+        "daily-20261001.csv",
+        "daily-20261006.csv",
+        "daily-20261007.csv",
+    ]
+    assert all("sent" not in p.parts for p in sel.files)
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX permissions and a non-root user",
+)
+def test_recursive_unreadable_subdir_keeps_other_matches(tmp_path):
+    d = make_tree(tmp_path)
+    locked = d / "locked"
+    locked.mkdir()
+    (locked / "daily-20261002.csv").write_text("x")
+    locked.chmod(0o000)
+    try:
+        job = JobConfig(
+            name="j",
+            remote_dir="/x",
+            patterns=[PatternConfig(dir=str(d), regex=r"daily-.*\.csv", recursive=True)],
+        )
+        sel = select_files(job)
+    finally:
+        locked.chmod(0o700)
+    assert [p.name for p in sel.files] == [
+        "daily-20261001.csv",
+        "daily-20261006.csv",
+        "daily-20261007.csv",
+    ]
+    assert len(sel.warnings) == 1
+    assert sel.warnings[0].startswith(f"cannot read directory {locked}")
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory modes"
+)
+def test_recursive_unreadable_pattern_dir_warns(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "daily-1.csv").write_text("x")
+    locked.chmod(0o000)
+    try:
+        job = JobConfig(
+            name="j",
+            remote_dir="/x",
+            patterns=[PatternConfig(dir=str(locked), regex=r".*\.csv", recursive=True)],
+        )
+        sel = select_files(job)
+    finally:
+        locked.chmod(0o700)
+    assert sel.files == []
+    assert len(sel.warnings) == 1 and "cannot read pattern directory" in sel.warnings[0]
