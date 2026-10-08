@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date
 
 import asyncssh
@@ -258,7 +259,10 @@ async def test_upload_file_retries_with_backoff(tmp_path):
     s = FakeSftp(fail_times=2)
     attempts = await runner.upload_file(s, f, "/in/f", retries=3, sleep=sleep)
     assert attempts == 3 and calls == [1.0, 2.0]
-    assert s.calls[-1] == ("posix_rename", "/in/f.part", "/in/f")
+    op, part, final = s.calls[-1]
+    assert op == "posix_rename" and final == "/in/f"
+    assert re.fullmatch(r"/in/f\.[0-9a-f]{8}\.part", part)
+    assert s.calls[-2] == ("put", part)
 
 
 async def test_upload_file_gives_up_after_retries(tmp_path):
@@ -269,7 +273,9 @@ async def test_upload_file_gives_up_after_retries(tmp_path):
     with pytest.raises(OSError, match="flaky"):
         await runner.upload_file(s, f, "/in/f", retries=2, sleep=sleep)
     assert calls == [1.0, 2.0]
-    assert "/in/f.part" in s.removed
+    part = s.calls[-1][1]
+    assert re.fullmatch(r"/in/f\.[0-9a-f]{8}\.part", part)
+    assert s.removed == [part]
 
 
 async def test_replace_remote_falls_back_without_posix_rename():
@@ -354,3 +360,78 @@ async def test_run_job_duplicate_basenames(ssh_server, client_key, incoming, tmp
     assert "duplicate remote name" in result.outcomes[1].error
     assert result.exit_code == 3
     assert (incoming / "x.txt").read_text() == "first"
+
+
+async def test_run_job_writes_file_rows_before_on_success(
+    ssh_server, client_key, incoming, tmp_path, monkeypatch
+):
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)], on_success="move")
+    cfg = make_config(ssh_server, client_key, job)
+    hist = History(tmp_path / "h.sqlite")
+    rows_at_on_success = []
+
+    def locked(policy, local):
+        rows_at_on_success.extend(hist.files(["x.txt"]))
+        raise OSError("locked")
+
+    monkeypatch.setattr(runner, "apply_on_success", locked)
+    result = await runner.run_job(
+        "j", cfg, history=hist, today=WEEKDAY, known_hosts=ssh_server.known_hosts
+    )
+    assert [r.status for r in rows_at_on_success] == ["sent"]
+    rows = hist.files_for_run(result.run_id)
+    assert len(rows) == 1 and rows[0].status == "sent" and "on_success" in rows[0].error
+    assert result.exit_code == 0 and f.exists()
+    hist.close()
+
+
+async def test_run_job_file_changed_during_upload(
+    ssh_server, client_key, incoming, tmp_path, monkeypatch
+):
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)], on_success="delete")
+    cfg = make_config(ssh_server, client_key, job)
+
+    async def growing_upload(sftp_client, local, remote, **kwargs):
+        with local.open("a") as fh:
+            fh.write("more")
+        return 1
+
+    monkeypatch.setattr(runner, "upload_file", growing_upload)
+    hist = History(tmp_path / "h.sqlite")
+    result = await runner.run_job(
+        "j", cfg, history=hist, today=WEEKDAY, known_hosts=ssh_server.known_hosts
+    )
+    o = result.outcomes[0]
+    assert o.status == "failed" and "changed while uploading" in o.error
+    assert result.exit_code == 1 and f.read_text() == "xmore"
+    rows = hist.files_for_run(result.run_id)
+    assert len(rows) == 1 and rows[0].status == "failed"
+    hist.close()
+
+
+async def test_run_job_retries_hash_and_upload_per_attempt(
+    ssh_server, client_key, incoming, tmp_path, monkeypatch
+):
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)], retries=2)
+    cfg = make_config(ssh_server, client_key, job)
+    seen = []
+
+    async def flaky_upload(sftp_client, local, remote, **kwargs):
+        seen.append(kwargs["retries"])
+        if len(seen) < 3:
+            raise OSError("flaky network")
+        return 1
+
+    sleep, calls = no_sleep_factory()
+    monkeypatch.setattr(runner, "upload_file", flaky_upload)
+    result = await runner.run_job(
+        "j", cfg, history=None, today=WEEKDAY, known_hosts=ssh_server.known_hosts, sleep=sleep
+    )
+    assert result.exit_code == 0 and result.outcomes[0].attempts == 3
+    assert seen == [0, 0, 0] and calls == [1.0, 2.0]

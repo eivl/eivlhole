@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import posixpath
+import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import asyncssh
 
-from eivlhole.config import Config
+from eivlhole.config import Config, JobConfig
 from eivlhole.errors import ConfigError, EivlholeError
 from eivlhole.history import History
 from eivlhole.jobs.calendar import decide
@@ -42,6 +43,7 @@ class FileOutcome:
     attempts: int = 0
     size: int = 0
     sha256: str = ""
+    history_id: int | None = None
 
 
 @dataclass
@@ -86,8 +88,11 @@ async def upload_file(
     sleep: SleepFn = asyncio.sleep,
     progress: ProgressFn | None = None,
 ) -> int:
-    """Upload with .part + atomic replace, retrying on transient errors. Returns attempts used."""
-    part = remote + ".part"
+    """Upload with .part + atomic replace, retrying on transient errors. Returns attempts used.
+
+    The temporary name carries a random token so concurrent writers never share it.
+    """
+    part = f"{remote}.{secrets.token_hex(4)}.part"
 
     def handler(_src: bytes, _dst: bytes, done: int, total: int) -> None:
         if progress is not None:
@@ -116,6 +121,48 @@ async def upload_file(
                 delay,
             )
             await sleep(delay)
+
+
+async def _send_one(
+    s: asyncssh.SFTPClient,
+    o: FileOutcome,
+    job: JobConfig,
+    sleep: SleepFn,
+    progress: ProgressFn | None,
+) -> None:
+    """Hash and upload one file, retrying per job.retries; set o.status and o.error.
+
+    Each attempt re-reads size, mtime and hash, and the file is failed if it changed
+    while it was being uploaded, so a file still being written is never recorded as sent.
+    """
+    while True:
+        o.attempts += 1
+        try:
+            st = o.local.stat()
+            before = (st.st_size, st.st_mtime_ns)
+            o.size = st.st_size
+            o.sha256 = await asyncio.to_thread(sha256_file, o.local)
+            await upload_file(s, o.local, o.remote, retries=0, sleep=sleep, progress=progress)
+            st = o.local.stat()
+        except (OSError, asyncssh.Error) as exc:
+            if o.attempts > job.retries:
+                o.status, o.error = "failed", str(exc) or type(exc).__name__
+                return
+            delay = BACKOFF[min(o.attempts - 1, len(BACKOFF) - 1)]
+            log.warning(
+                "upload of %s failed (attempt %d): %s; retrying in %gs",
+                o.local.name,
+                o.attempts,
+                exc,
+                delay,
+            )
+            await sleep(delay)
+            continue
+        if (st.st_size, st.st_mtime_ns) != before:
+            o.status, o.error = "failed", "changed while uploading"
+        else:
+            o.status = "sent"
+        return
 
 
 def apply_on_success(policy: str, local: Path) -> None:
@@ -207,6 +254,23 @@ async def run_job(
     run_id = _safe(history, lambda h: h.start_run("job", job=name, host=host.name))
     result.run_id = run_id
     error: str | None = None
+
+    def record(o: FileOutcome) -> None:
+        o.history_id = _safe(
+            history,
+            lambda h: h.add_file(
+                run_id,
+                direction="out",
+                filename=o.local.name,
+                local_path=str(o.local),
+                remote_path=o.remote,
+                size=o.size,
+                sha256=o.sha256,
+                status=o.status,
+                error=o.error,
+            ),
+        )
+
     try:
         if not selection.files and not selection.missing:
             error = "no files matched the job's files or patterns"
@@ -218,21 +282,9 @@ async def run_job(
                     for o in outcomes:
                         if o.status != "pending":
                             continue
-                        try:
-                            o.size = o.local.stat().st_size
-                            o.sha256 = await asyncio.to_thread(sha256_file, o.local)
-                            o.attempts = await upload_file(
-                                s,
-                                o.local,
-                                o.remote,
-                                retries=job.retries,
-                                sleep=sleep,
-                                progress=progress,
-                            )
-                            o.status = "sent"
-                        except (OSError, asyncssh.Error, EivlholeError) as exc:
-                            o.status = "failed"
-                            o.error = str(exc) or type(exc).__name__
+                        await _send_one(s, o, job, sleep, progress)
+                        record(o)  # before on_success touches the local file
+                        if o.status != "sent":
                             log.error("job %s: %s failed: %s", name, o.local, o.error)
                             continue
                         try:
@@ -242,6 +294,11 @@ async def run_job(
                             o.error = msg
                             result.warnings.append(msg)
                             log.warning("job %s: %s: %s", name, o.local, msg)
+                            if o.history_id is not None:
+                                _safe(
+                                    history,
+                                    lambda h, o=o: h.update_file_error(o.history_id, o.error),
+                                )
             except (EivlholeError, OSError, asyncssh.Error) as exc:
                 error = str(exc) or type(exc).__name__
                 for o in outcomes:
@@ -255,20 +312,8 @@ async def run_job(
             if o.status == "pending":
                 o.status, o.error = "failed", error or "run interrupted"
         for o in outcomes:
-            _safe(
-                history,
-                lambda h, o=o: h.add_file(
-                    run_id,
-                    direction="out",
-                    filename=o.local.name,
-                    local_path=str(o.local),
-                    remote_path=o.remote,
-                    size=o.size,
-                    sha256=o.sha256,
-                    status=o.status,
-                    error=o.error,
-                ),
-            )
+            if o.history_id is None:
+                record(o)
         sent, failed = result.sent, result.failed
         if sent and not failed and error is None:
             result.status, result.exit_code = "ok", EXIT_OK

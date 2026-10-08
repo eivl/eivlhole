@@ -169,3 +169,21 @@ def test_files_exact_name_with_brackets(tmp_path):
     assert len(h.files(["report*.csv"])) == 2
     assert [f.filename for f in h.files(["report?.csv"])] == ["report1.csv"]
     h.close()
+
+
+def test_update_file_error(tmp_path):
+    h = make(tmp_path)
+    rid = h.start_run("job", job="j")
+    fid = h.add_file(
+        rid,
+        direction="out",
+        filename="a.csv",
+        local_path="/l/a",
+        remote_path="/r/a",
+        size=1,
+        sha256="aa",
+        status="sent",
+    )
+    h.update_file_error(fid, "sent, but on_success 'move' failed: locked")
+    (rec,) = h.files_for_run(rid)
+    assert rec.status == "sent" and "on_success" in rec.error

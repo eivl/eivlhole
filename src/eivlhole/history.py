@@ -164,6 +164,10 @@ class History:
         self._conn.commit()
         return int(cur.lastrowid)
 
+    def update_file_error(self, file_id: int, error: str | None) -> None:
+        self._conn.execute("UPDATE files SET error=? WHERE id=?", (error, file_id))
+        self._conn.commit()
+
     # --- reads --------------------------------------------------------
 
     def files(
