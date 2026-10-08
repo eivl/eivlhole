@@ -128,3 +128,38 @@ async def test_concurrent_claims_only_one_wins(target, ssh_server, drop):
         )
         assert sum(r is None for r in results) == 1
         assert sum(isinstance(r, CodeNotFound) for r in results) == 1
+
+
+@pytest.mark.parametrize("bad", ["../x", "/etc/passwd", "a/../b", "a\\b", ""])
+async def test_remote_path_rejects_traversal(target, ssh_server, drop, bad):
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        with pytest.raises(MailboxError):
+            mb.remote_path("0" * 32, bad)
+
+
+async def test_claim_rejects_bad_code_and_id(target, ssh_server, drop):
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        tid = await mb.allocate()
+        code = await mb.publish(tid, 2)
+        with pytest.raises(MailboxError):
+            await mb.claim("../x", tid)
+        with pytest.raises(MailboxError):
+            await mb.claim(code, "zzz")
+
+
+async def test_resolve_without_layout_is_mailbox_error(target, ssh_server):
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/missing")
+        with pytest.raises(MailboxError, match="server init"):
+            await mb.resolve("1-a-b")
+
+
+async def test_read_manifest_corrupt(target, ssh_server, drop):
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        tid = await mb.allocate()
+        (drop / "transfers" / tid / "manifest.json").write_text('{"nope": 1}')
+        with pytest.raises(MailboxError, match="corrupt"):
+            await mb.read_manifest(tid)

@@ -22,6 +22,29 @@ MANIFEST = "manifest.json"
 CLAIMED = "claimed"
 
 
+CODE_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def _check_relpath(relpath: str) -> None:
+    if (
+        not relpath
+        or relpath.startswith("/")
+        or "\\" in relpath
+        or any(seg in ("", ".", "..") for seg in relpath.split("/"))
+    ):
+        raise MailboxError(f"unsafe path in transfer: {relpath!r}")
+
+
+def _check_code(code: str) -> None:
+    if not CODE_RE.match(code):
+        raise MailboxError(f"invalid code {code!r}")
+
+
+def _check_transfer_id(tid: str) -> None:
+    if not TRANSFER_ID_RE.match(tid):
+        raise MailboxError("invalid transfer id")
+
+
 class SftpMailbox:
     def __init__(self, sftp: asyncssh.SFTPClient, root: str):
         self.sftp = sftp
@@ -30,12 +53,15 @@ class SftpMailbox:
     # --- paths ---------------------------------------------------------
 
     def _code_path(self, code: str) -> str:
+        _check_code(code)
         return posixpath.join(self.root, "codes", code)
 
     def _transfer_dir(self, transfer_id: str) -> str:
+        _check_transfer_id(transfer_id)
         return posixpath.join(self.root, "transfers", transfer_id)
 
     def remote_path(self, transfer_id: str, relpath: str) -> str:
+        _check_relpath(relpath)
         return posixpath.join(self._transfer_dir(transfer_id), relpath)
 
     # --- sending -------------------------------------------------------
@@ -103,8 +129,15 @@ class SftpMailbox:
             async with self.sftp.open(self._code_path(code), "rb") as f:
                 text = (await f.read()).decode("ascii", errors="replace").strip()
         except asyncssh.SFTPError as exc:
-            raise CodeNotFound(
-                f"code {code} not found: it may be mistyped, already claimed, or expired"
+            if isinstance(exc, asyncssh.SFTPNoSuchFile) and await self.sftp.isdir(
+                posixpath.join(self.root, "codes")
+            ):
+                raise CodeNotFound(
+                    f"code {code} not found: it may be mistyped, already claimed, or expired"
+                ) from exc
+            raise MailboxError(
+                f"cannot read code under {self.root}/codes: {exc}. "
+                f"Has `eivlhole server init` been run, and is defaults.drop_root correct?"
             ) from exc
         if not TRANSFER_ID_RE.match(text):
             raise MailboxError(f"code {code} points at a malformed transfer id")
@@ -115,18 +148,24 @@ class SftpMailbox:
             await self.sftp.rename(
                 self._code_path(code), self.remote_path(transfer_id, CLAIMED)
             )
-        except asyncssh.SFTPError as exc:
+        except (asyncssh.SFTPNoSuchFile, asyncssh.SFTPFailure) as exc:
             raise CodeNotFound(f"code {code} was claimed by someone else or expired") from exc
+        except asyncssh.SFTPError as exc:
+            raise MailboxError(f"cannot claim code {code}: {exc}") from exc
 
     async def read_manifest(self, transfer_id: str) -> Manifest:
         try:
             async with self.sftp.open(self.remote_path(transfer_id, MANIFEST), "rb") as f:
-                return Manifest.from_json((await f.read()).decode("utf-8"))
+                data = await f.read()
         except asyncssh.SFTPError as exc:
             raise MailboxError(
                 "transfer has no manifest: the sender has not finished uploading, "
                 "or the transfer was removed"
             ) from exc
+        try:
+            return Manifest.from_json(data.decode("utf-8"))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise MailboxError("transfer manifest is corrupt") from exc
 
     async def get_file(
         self, transfer_id: str, relpath: str, local: Path, progress: ProgressFn | None = None
@@ -156,6 +195,8 @@ class SftpMailbox:
 
     async def remove(self, transfer_id: str) -> None:
         try:
-            await self.sftp.rmtree(self._transfer_dir(transfer_id), ignore_errors=True)
+            await self.sftp.rmtree(self._transfer_dir(transfer_id))
+        except asyncssh.SFTPNoSuchFile:
+            return
         except asyncssh.SFTPError as exc:
             log.warning("could not remove transfer %s: %s", transfer_id, exc)
