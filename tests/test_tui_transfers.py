@@ -127,7 +127,7 @@ async def test_send_and_receive_round_trip(config_dir, ssh_server, client_key, t
         await pilot.press("R")
         await submit_prompt(app, pilot, code)
         await wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen))
-        assert "report.txt" in str(app.screen.query_one("#confirm-body").content)
+        assert "report.txt" in str(app.screen.query_one("#confirm-text").content)
         await pilot.press("y")
         await wait_for(pilot, lambda: (inbox / "report.txt").exists())
         await app.workers.wait_for_complete()
@@ -289,7 +289,7 @@ async def test_quit_during_job_asks_and_exits(
         await pilot.press("q")
         await pilot.pause()
         assert isinstance(app.screen, ConfirmScreen)
-        assert "job" in str(app.screen.query_one("#confirm-body").content)
+        assert "job" in str(app.screen.query_one("#confirm-text").content)
         await pilot.press("y")
         await wait_for_exit(app)
     assert app.return_code == 0
@@ -349,3 +349,28 @@ async def test_quit_during_real_job_finishes_run_row(
     with History(paths.history_file()) as h:
         runs = h.runs()
     assert len(runs) == 1 and runs[0].status not in ("running", "ok")
+
+
+async def test_receive_confirm_shows_summary_for_many_files(
+    config_dir, ssh_server, client_key, tmp_path
+):
+    write_full_config(ssh_server, client_key, tmp_path)
+    many = tmp_path / "many"
+    many.mkdir()
+    for i in range(40):
+        (many / f"f{i:02}.txt").write_text(str(i))
+    app = EivlholeApp()
+    app.poll = 0.1
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("s")
+        await submit_prompt(app, pilot, str(many))
+        await wait_for(pilot, lambda: "Code:" in log_text(app))
+        code = CODE_RE.search(log_text(app)).group(0)
+        await pilot.press("R")
+        await submit_prompt(app, pilot, code)
+        await wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+        body = str(app.screen.query_one("#confirm-text").content)
+        assert body.startswith("40 file(s)")
+        assert "and 25 more" in body
+        await pilot.press("n")
+        await wait_for(pilot, lambda: "cancelled" in status(app))

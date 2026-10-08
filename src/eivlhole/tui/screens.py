@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, Static
 
@@ -80,7 +80,8 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm"):
             yield Static(self.title_text, markup=False)
-            yield Static(self.body, id="confirm-body", markup=False)
+            with VerticalScroll(id="confirm-body"):
+                yield Static(self.body, id="confirm-text", markup=False)
             yield Label("y = yes   n = no")
 
     def action_yes(self) -> None:

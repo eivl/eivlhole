@@ -35,6 +35,8 @@ from eivlhole.tui.screens import ConfirmScreen, HelpScreen, TextPrompt
 
 log = logging.getLogger(__name__)
 
+CONFIRM_FILES = 15  # file lines listed in the receive confirmation
+
 
 def split_paths(text: str) -> list[Path]:
     """Split user-typed paths; keep backslashes on Windows, honour quotes on both."""
@@ -524,9 +526,13 @@ class EivlholeApp(App[None]):
         out_dir = Path(self.config.defaults.receive_dir).expanduser()
 
         async def confirm(manifest: Manifest) -> bool:
-            body = "\n".join(f"{e.path}  {format_size(e.size)}" for e in manifest.files)
             total = format_size(manifest.total_size)
-            body += f"\n\n{len(manifest.files)} file(s), {total} from {manifest.sender}"
+            lines = [f"{len(manifest.files)} file(s), {total} from {manifest.sender}", ""]
+            shown = manifest.files[:CONFIRM_FILES]
+            lines += [f"{e.path}  {format_size(e.size)}" for e in shown]
+            if len(manifest.files) > len(shown):
+                lines.append(f"... and {len(manifest.files) - len(shown)} more")
+            body = "\n".join(lines)
             return await self.push_screen_wait(
                 ConfirmScreen(f"Receive into {out_dir.resolve()}?", body)
             )

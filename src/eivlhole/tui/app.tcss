@@ -9,4 +9,4 @@
 #status { height: 1; background: $panel; padding: 0 1; }
 #help, #prompt, #confirm { width: 80; height: auto; max-height: 80%; border: thick $accent; background: $surface; padding: 1 2; }
 HelpScreen, TextPrompt, ConfirmScreen { align: center middle; }
-#confirm-body { max-height: 20; overflow-y: auto; }
+#confirm-body { height: auto; max-height: 20; }
