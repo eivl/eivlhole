@@ -34,17 +34,39 @@ default = true
 
 ## Drop host setup (Linux, once)
 
+`server init` and the cron sweep run as root, so install eivlhole for root
+with its command in a directory on root's PATH:
+
+```
+sudo UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --index-url https://ARTIFACTORY/api/pypi/pypi/simple eivlhole
+```
+
+(or `sudo pip install --index-url ... eivlhole`). Then:
+
 ```
 sudo useradd --system --home-dir /srv/eivlhole/home --shell /usr/sbin/nologin eivlhole
 sudo passwd eivlhole                       # temporary, for key enrolment
-sudo eivlhole server init --root /srv/eivlhole --user eivlhole
+sudo /usr/local/bin/eivlhole server init --root /srv/eivlhole --user eivlhole
 ```
 
 `server init` prints an sshd `Match User` block. Add it to
-`/etc/ssh/sshd_config` and reload sshd. Then add a cron entry for expiry:
+`/etc/ssh/sshd_config` and reload sshd. The block uses
+`ForceCommand internal-sftp -d /home` so that, inside the chroot, the SFTP
+session starts in the service account's home and `eivlhole keys enrol` writes
+the `authorized_keys` file sshd reads.
+
+Password login is only needed while clients run `eivlhole keys enrol`. Once
+every client has enrolled its key:
+
+1. lock the password: `sudo passwd -l eivlhole`
+2. remove the `PasswordAuthentication yes` line from the `Match User` block
+   and reload sshd.
+
+Add a root cron entry for expiry, with the absolute path (cron's PATH does not
+include `/usr/local/bin` on every distribution):
 
 ```
-0 3 * * * eivlhole server sweep --root /srv/eivlhole --max-age 7d
+0 3 * * * /usr/local/bin/eivlhole server sweep --root /srv/eivlhole --max-age 7d
 ```
 
 `codes/` and `transfers/` are mode 0733 and owned by root: the service

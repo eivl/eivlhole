@@ -74,6 +74,6 @@ Match User {user}
 # Clients then use:
 #   [defaults]
 #   drop_root = "/"
-# and cron on this host:
-#   0 3 * * * eivlhole server sweep --root {root} --max-age 7d
+# and root's cron on this host:
+#   0 3 * * * /usr/local/bin/eivlhole server sweep --root {root} --max-age 7d
 """
