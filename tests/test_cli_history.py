@@ -114,3 +114,36 @@ def test_history_unavailable_db(config_dir):
     paths.history_file().mkdir()
     r = runner.invoke(app, ["history", "runs"])
     assert r.exit_code == 1 and "history unavailable" in r.output
+
+
+def test_history_json_preserves_emoji_codes(config_dir):
+    h = History(paths.history_file())
+    r1 = h.start_run("job", job="reports", host="drop")
+    h.add_file(
+        r1,
+        direction="out",
+        filename="report:warning:.csv",
+        local_path="/l/d",
+        remote_path="/x",
+        size=1,
+        sha256="aa",
+        status="sent",
+    )
+    h.finish_run(r1, "ok")
+    h.close()
+    r = runner.invoke(app, ["history", "files", "report:warning:.csv", "--json"])
+    assert r.exit_code == 0
+    assert json.loads(r.output.strip().splitlines()[0])["filename"] == "report:warning:.csv"
+    r = runner.invoke(app, ["history", "files", "report:warning:.csv"])
+    assert r.exit_code == 0 and ":warning:" in r.output
+
+
+def test_history_runs_tolerates_bad_timestamp(config_dir):
+    h = History(paths.history_file())
+    r1 = h.start_run("job", job="reports", host="drop")
+    h.finish_run(r1, "ok")
+    h._conn.execute("UPDATE runs SET started='not-a-time' WHERE id=?", (r1,))
+    h._conn.commit()
+    h.close()
+    r = runner.invoke(app, ["history", "runs"])
+    assert r.exit_code == 0 and "not-a-time" in r.output

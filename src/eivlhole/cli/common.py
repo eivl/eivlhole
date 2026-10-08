@@ -27,8 +27,8 @@ from eivlhole.errors import EivlholeError
 from eivlhole.history import History
 from eivlhole.ssh.client import SSHTarget, TrustPrompt
 
-console = Console()
-err = Console(stderr=True)
+console = Console(emoji=False)
+err = Console(stderr=True, emoji=False)
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 
 import typer
 from rich.markup import escape
@@ -19,7 +19,13 @@ history_app = typer.Typer(help="Query the transaction log.", no_args_is_help=Tru
 def _local(ts: str | None) -> str:
     if not ts:
         return ""
-    return datetime.fromisoformat(ts).astimezone().strftime("%Y-%m-%d %H:%M")
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return ts
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _history(ctx: typer.Context) -> History:
