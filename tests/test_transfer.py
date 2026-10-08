@@ -1,10 +1,11 @@
 import asyncio
 import hashlib
+import json
 
 import pytest
 
 from eivlhole import transfer
-from eivlhole.errors import CodeNotFound, TransferError
+from eivlhole.errors import CodeNotFound, MailboxError, TransferError
 from eivlhole.history import History
 from eivlhole.mailbox.sftp import SftpMailbox
 from eivlhole.ssh.client import sftp
@@ -224,3 +225,90 @@ async def test_send_missing_file_touches_nothing(target, ssh_server, drop, tmp_p
         with pytest.raises(TransferError):
             await transfer.send([tmp_path / "ghost"], mb, history=None, host_name="drop")
     assert list((drop / "transfers").iterdir()) == []
+
+
+async def test_wait_for_receipt_failure_marker(target, ssh_server, drop, tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    kh = ssh_server.known_hosts
+    async with sftp(target, known_hosts=kh) as s1, sftp(target, known_hosts=kh) as s2:
+        a, b = SftpMailbox(s1, "/drop"), SftpMailbox(s2, "/drop")
+        res = await transfer.send([f], a, history=None, host_name="drop")
+        await b.mark_failed(res.transfer_id, "f.txt: boom")
+        with pytest.raises(TransferError, match="receiver reported failure"):
+            await transfer.wait_for_receipt(a, res.transfer_id, poll=0.05)
+
+
+async def test_wait_for_receipt_vanished_counts_as_received(
+    target, ssh_server, drop, tmp_path
+):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    states = []
+    kh = ssh_server.known_hosts
+    async with sftp(target, known_hosts=kh) as s1, sftp(target, known_hosts=kh) as s2:
+        a, b = SftpMailbox(s1, "/drop"), SftpMailbox(s2, "/drop")
+        res = await transfer.send([f], a, history=None, host_name="drop")
+        await b.remove(res.transfer_id)
+        await transfer.wait_for_receipt(
+            a, res.transfer_id, poll=0.05, on_state=states.append
+        )
+    assert states[-1] == "received"
+
+
+async def test_receive_rejects_traversal_manifest(target, ssh_server, drop, tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        res = await transfer.send([f], mb, history=None, host_name="drop")
+        manifest = drop / "transfers" / res.transfer_id / "manifest.json"
+        manifest.write_text(json.dumps({
+            "created": "c", "sender": "s", "version": 1,
+            "files": [{"path": "../escape.txt", "size": 1, "sha256": "0" * 64}],
+        }))
+        out = tmp_path / "out"
+        with pytest.raises(MailboxError):
+            await transfer.receive(res.code, mb, out, history=None, host_name="drop")
+        assert not (tmp_path / "escape.txt").exists()
+        assert await mb.resolve(res.code) == res.transfer_id
+
+
+async def test_receive_overwrite_keeps_original_on_mismatch(
+    target, ssh_server, drop, tmp_path
+):
+    f = tmp_path / "f.txt"
+    f.write_text("new")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "f.txt").write_text("old")
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        res = await transfer.send([f], mb, history=None, host_name="drop")
+        (drop / "transfers" / res.transfer_id / "f.txt").write_text("tampered")
+        with pytest.raises(TransferError, match="checksum"):
+            await transfer.receive(
+                res.code, mb, out, history=None, host_name="drop", overwrite=True
+            )
+    assert (out / "f.txt").read_text() == "old"
+    assert not (out / "f.txt.part").exists()
+
+
+async def test_send_cleans_up_when_publish_fails(
+    target, ssh_server, drop, tmp_path, monkeypatch
+):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    hist = History(tmp_path / "h.sqlite")
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+
+        async def boom(*args, **kwargs):
+            raise MailboxError("boom")
+
+        monkeypatch.setattr(mb, "publish", boom)
+        with pytest.raises(MailboxError, match="boom"):
+            await transfer.send([f], mb, history=hist, host_name="drop")
+    assert list((drop / "transfers").iterdir()) == []
+    assert hist.run(1).status == "failed"
+    hist.close()

@@ -13,7 +13,13 @@ from pathlib import Path
 
 from eivlhole.errors import TransferError
 from eivlhole.history import History, utcnow
-from eivlhole.mailbox.base import Mailbox, Manifest, ManifestEntry, ProgressFn
+from eivlhole.mailbox.base import (
+    Mailbox,
+    Manifest,
+    ManifestEntry,
+    ProgressFn,
+    validate_relpath,
+)
 from eivlhole.mailbox.codes import normalize_code
 
 log = logging.getLogger(__name__)
@@ -85,6 +91,8 @@ async def send(
 ) -> SendResult:
     files = collect_files(paths)
     run_id = _safe(history, lambda h: h.start_run("send", host=host_name))
+    status, exit_code, error = "failed", 1, None
+    transfer_id: str | None = None
     try:
         transfer_id = await mailbox.allocate()
         entries: list[ManifestEntry] = []
@@ -103,11 +111,17 @@ async def send(
         )
         await mailbox.write_manifest(transfer_id, manifest)
         code = await mailbox.publish(transfer_id, words)
-    except Exception as exc:
-        err = str(exc)
-        _safe(history, lambda h: h.finish_run(run_id, "failed", exit_code=1, error=err))
+        status, exit_code = "ok", 0
+    except BaseException as exc:
+        error = str(exc) or type(exc).__name__
+        if transfer_id is not None:
+            await mailbox.remove(transfer_id)
         raise
-    _safe(history, lambda h: h.finish_run(run_id, "ok"))
+    finally:
+        if run_id is not None:
+            _safe(history, lambda h: h.finish_run(
+                run_id, status, exit_code=exit_code, error=error
+            ))
     log.info("sent %d file(s) as transfer %s code %s", len(entries), transfer_id, code)
     return SendResult(transfer_id=transfer_id, code=code, files=entries, run_id=run_id)
 
@@ -119,16 +133,22 @@ async def wait_for_receipt(
     poll: float = 2.0,
     on_state: Callable[[str], None] | None = None,
 ) -> None:
-    while not await mailbox.is_claimed(transfer_id):
+    claimed = False
+    while True:
+        msg = await mailbox.failure(transfer_id)
+        if msg is not None:
+            raise TransferError(f"receiver reported failure: {msg}")
         if not await mailbox.exists(transfer_id):
-            raise TransferError("transfer was removed from the drop host before it was claimed")
+            if not claimed and on_state:
+                on_state("claimed")
+            if on_state:
+                on_state("received")
+            return
+        if not claimed and await mailbox.is_claimed(transfer_id):
+            claimed = True
+            if on_state:
+                on_state("claimed")
         await asyncio.sleep(poll)
-    if on_state:
-        on_state("claimed")
-    while await mailbox.exists(transfer_id):
-        await asyncio.sleep(poll)
-    if on_state:
-        on_state("received")
 
 
 async def receive(
@@ -149,6 +169,8 @@ async def receive(
     out_dir = Path(out_dir)
     transfer_id = await mailbox.resolve(code)
     manifest = await mailbox.read_manifest(transfer_id)
+    for entry in manifest.files:
+        validate_relpath(entry.path)
 
     conflicts = [e.path for e in manifest.files if (out_dir / e.path).exists()]
     if conflicts and not overwrite:
@@ -162,36 +184,51 @@ async def receive(
 
     await mailbox.claim(code, transfer_id)
     run_id = _safe(history, lambda h: h.start_run("receive", host=host_name))
-    received: list[Path] = []
-    failures: list[str] = []
-    for entry in manifest.files:
-        local = out_dir / entry.path
-        remote = mailbox.remote_path(transfer_id, entry.path)
-        try:
-            await mailbox.get_file(transfer_id, entry.path, local, progress)
-            digest = await asyncio.to_thread(sha256_file, local)
-            if digest != entry.sha256:
-                local.unlink(missing_ok=True)
-                raise TransferError(f"checksum mismatch for {entry.path}")
-        except Exception as exc:  # noqa: BLE001 - record and continue with other files
-            failures.append(f"{entry.path}: {exc}")
-            _safe(history, lambda h, entry=entry, local=local, remote=remote, exc=exc: h.add_file(
+    status, exit_code, error = "failed", 1, None
+    try:
+        received: list[Path] = []
+        failures: list[str] = []
+        for entry in manifest.files:
+            local = out_dir / entry.path
+            part = local.with_name(local.name + ".part")
+            remote = mailbox.remote_path(transfer_id, entry.path)
+            try:
+                await mailbox.get_file(transfer_id, entry.path, part, progress)
+                digest = await asyncio.to_thread(sha256_file, part)
+                if digest != entry.sha256:
+                    part.unlink(missing_ok=True)
+                    raise TransferError(f"checksum mismatch for {entry.path}")
+                part.replace(local)
+            except Exception as exc:  # noqa: BLE001 - record and continue with other files
+                part.unlink(missing_ok=True)
+                failures.append(f"{entry.path}: {exc}")
+                _safe(history, lambda h, entry=entry, local=local, remote=remote,
+                      exc=exc: h.add_file(
+                    run_id, direction="in", filename=Path(entry.path).name,
+                    local_path=str(local), remote_path=remote, size=entry.size,
+                    sha256=entry.sha256, status="failed", error=str(exc),
+                ))
+                continue
+            received.append(local)
+            _safe(history, lambda h, entry=entry, local=local, remote=remote: h.add_file(
                 run_id, direction="in", filename=Path(entry.path).name, local_path=str(local),
-                remote_path=remote, size=entry.size, sha256=entry.sha256, status="failed",
-                error=str(exc),
+                remote_path=remote, size=entry.size, sha256=entry.sha256, status="received",
             ))
-            continue
-        received.append(local)
-        _safe(history, lambda h, entry=entry, local=local, remote=remote: h.add_file(
-            run_id, direction="in", filename=Path(entry.path).name, local_path=str(local),
-            remote_path=remote, size=entry.size, sha256=entry.sha256, status="received",
-        ))
-    if failures:
-        _safe(history, lambda h: h.finish_run(
-            run_id, "failed", exit_code=3 if received else 1, error="; ".join(failures)
-        ))
-        raise TransferError("some files failed: " + "; ".join(failures))
-    await mailbox.remove(transfer_id)
-    _safe(history, lambda h: h.finish_run(run_id, "ok"))
+        if failures:
+            error = "; ".join(failures)
+            exit_code = 3 if received else 1
+            await mailbox.mark_failed(transfer_id, error)
+            raise TransferError("some files failed: " + error)
+        await mailbox.remove(transfer_id)
+        status, exit_code = "ok", 0
+    except BaseException as exc:
+        if error is None:
+            error = str(exc) or type(exc).__name__
+        raise
+    finally:
+        if run_id is not None:
+            _safe(history, lambda h: h.finish_run(
+                run_id, status, exit_code=exit_code, error=error
+            ))
     log.info("received %d file(s) from transfer %s", len(received), transfer_id)
     return ReceiveResult(transfer_id=transfer_id, files=received, run_id=run_id)

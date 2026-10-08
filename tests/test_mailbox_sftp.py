@@ -76,7 +76,6 @@ async def test_resolve_claim_read_get_remove(target, ssh_server, drop, tmp_path)
         out = tmp_path / "out" / "a.bin"
         await mb.get_file(tid, "a.bin", out)
         assert out.read_bytes() == local.read_bytes()
-        assert not out.with_name("a.bin.part").exists()
         assert await mb.exists(tid) is True
         await mb.remove(tid)
         assert await mb.exists(tid) is False
@@ -163,3 +162,12 @@ async def test_read_manifest_corrupt(target, ssh_server, drop):
         (drop / "transfers" / tid / "manifest.json").write_text('{"nope": 1}')
         with pytest.raises(MailboxError, match="corrupt"):
             await mb.read_manifest(tid)
+
+
+async def test_mark_failed_and_failure(target, ssh_server, drop):
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        tid = await mb.allocate()
+        assert await mb.failure(tid) is None
+        await mb.mark_failed(tid, "a.txt: checksum mismatch")
+        assert await mb.failure(tid) == "a.txt: checksum mismatch"

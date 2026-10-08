@@ -11,7 +11,7 @@ from pathlib import Path
 import asyncssh
 
 from eivlhole.errors import CodeNotFound, MailboxError
-from eivlhole.mailbox.base import Manifest, ProgressFn
+from eivlhole.mailbox.base import Manifest, ProgressFn, validate_relpath
 from eivlhole.mailbox.codes import generate_code
 
 log = logging.getLogger(__name__)
@@ -20,19 +20,10 @@ TRANSFER_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 BLOCK_SIZE = 65536
 MANIFEST = "manifest.json"
 CLAIMED = "claimed"
+FAILED = "failed"
 
 
 CODE_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-
-
-def _check_relpath(relpath: str) -> None:
-    if (
-        not relpath
-        or relpath.startswith("/")
-        or "\\" in relpath
-        or any(seg in ("", ".", "..") for seg in relpath.split("/"))
-    ):
-        raise MailboxError(f"unsafe path in transfer: {relpath!r}")
 
 
 def _check_code(code: str) -> None:
@@ -61,7 +52,7 @@ class SftpMailbox:
         return posixpath.join(self.root, "transfers", transfer_id)
 
     def remote_path(self, transfer_id: str, relpath: str) -> str:
-        _check_relpath(relpath)
+        validate_relpath(relpath)
         return posixpath.join(self._transfer_dir(transfer_id), relpath)
 
     # --- sending -------------------------------------------------------
@@ -171,7 +162,6 @@ class SftpMailbox:
         self, transfer_id: str, relpath: str, local: Path, progress: ProgressFn | None = None
     ) -> None:
         local.parent.mkdir(parents=True, exist_ok=True)
-        part = local.with_name(local.name + ".part")
 
         def handler(_src: bytes, _dst: bytes, done: int, total: int) -> None:
             if progress is not None:
@@ -179,13 +169,12 @@ class SftpMailbox:
 
         try:
             await self.sftp.get(
-                self.remote_path(transfer_id, relpath), str(part),
+                self.remote_path(transfer_id, relpath), str(local),
                 progress_handler=handler, block_size=BLOCK_SIZE,
             )
         except asyncssh.SFTPError as exc:
-            part.unlink(missing_ok=True)
+            local.unlink(missing_ok=True)
             raise MailboxError(f"download of {relpath} failed: {exc}") from exc
-        part.replace(local)
 
     async def is_claimed(self, transfer_id: str) -> bool:
         return await self.sftp.exists(self.remote_path(transfer_id, CLAIMED))
@@ -200,3 +189,17 @@ class SftpMailbox:
             return
         except asyncssh.SFTPError as exc:
             log.warning("could not remove transfer %s: %s", transfer_id, exc)
+
+    async def mark_failed(self, transfer_id: str, message: str) -> None:
+        try:
+            async with self.sftp.open(self.remote_path(transfer_id, FAILED), "wb") as f:
+                await f.write(message.encode("utf-8", errors="replace"))
+        except asyncssh.SFTPError as exc:
+            log.warning("could not mark transfer %s failed: %s", transfer_id, exc)
+
+    async def failure(self, transfer_id: str) -> str | None:
+        try:
+            async with self.sftp.open(self.remote_path(transfer_id, FAILED), "rb") as f:
+                return (await f.read()).decode("utf-8", errors="replace")
+        except asyncssh.SFTPError:
+            return None

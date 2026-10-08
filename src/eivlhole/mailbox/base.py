@@ -8,7 +8,19 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from eivlhole.errors import MailboxError
+
 ProgressFn = Callable[[str, int, int], None]
+
+
+def validate_relpath(relpath: str) -> None:
+    if (
+        not relpath
+        or relpath.startswith("/")
+        or "\\" in relpath
+        or any(seg in ("", ".", "..") for seg in relpath.split("/"))
+    ):
+        raise MailboxError(f"unsafe path in transfer: {relpath!r}")
 
 
 @dataclass
@@ -56,7 +68,12 @@ class Mailbox(Protocol):
     async def read_manifest(self, transfer_id: str) -> Manifest: ...
     async def get_file(
         self, transfer_id: str, relpath: str, local: Path, progress: ProgressFn | None = None
-    ) -> None: ...
+    ) -> None:
+        """Download to exactly `local`; no temp file or rename (the caller owns that)."""
+        ...
+
     async def is_claimed(self, transfer_id: str) -> bool: ...
     async def exists(self, transfer_id: str) -> bool: ...
     async def remove(self, transfer_id: str) -> None: ...
+    async def mark_failed(self, transfer_id: str, message: str) -> None: ...
+    async def failure(self, transfer_id: str) -> str | None: ...
