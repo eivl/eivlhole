@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import subprocess
+from pathlib import Path
 
 from rich.text import Text
-from textual.app import App, ComposeResult
+from textual import work
+from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, ProgressBar, RichLog, Static
 
 from eivlhole import paths
+from eivlhole.cli.config_cmd import _editor_command as editor_command
 from eivlhole.config import Config, load_config
 from eivlhole.errors import EivlholeError
 from eivlhole.history import FileRecord, History
+from eivlhole.ssh import keys
+from eivlhole.ssh.client import target_from_host
 from eivlhole.tui import data
 from eivlhole.tui.panels import HistoryPanel, HostsPanel, JobsPanel
-from eivlhole.tui.screens import HelpScreen
+from eivlhole.tui.screens import HelpScreen, TextPrompt
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +35,9 @@ class EivlholeApp(App[None]):
         Binding("1", "focus_panel('jobs')", "Jobs"),
         Binding("2", "focus_panel('hosts')", "Hosts"),
         Binding("3", "focus_panel('history')", "History"),
+        Binding("slash", "filter", "Filter"),
+        Binding("e", "edit_config", "Edit config"),
+        Binding("t", "test_host", "Test host"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -194,3 +203,85 @@ class EivlholeApp(App[None]):
 
     def selected_host(self) -> str | None:
         return self.query_one(HostsPanel).selected_key() or self.config.defaults.host
+
+    # --- filter -------------------------------------------------------
+
+    def action_filter(self) -> None:
+        self.push_screen(
+            TextPrompt(
+                "Filter history: filename or glob, a date, or start..end (empty = all runs)",
+                placeholder="daily-*.csv 2026-10-07",
+                value=self.filter_text,
+            ),
+            callback=self._apply_filter,
+        )
+
+    def _apply_filter(self, text: str | None) -> None:
+        if text is None:
+            return
+        try:
+            flt = data.parse_history_filter(text)
+        except EivlholeError as exc:
+            self.set_status(str(exc), error=True)
+            return
+        self.filter, self.filter_text = flt, text
+        self.populate_history()
+        self.set_status(f"history: {flt.describe()}")
+
+    # --- edit config --------------------------------------------------
+
+    def _run_editor(self, cmd: list[str], path: Path) -> int:
+        try:
+            with self.suspend():
+                return subprocess.run([*cmd, str(path)]).returncode
+        except SuspendNotSupported:
+            return subprocess.run([*cmd, str(path)]).returncode
+
+    def action_edit_config(self) -> None:
+        try:
+            cmd = editor_command()
+        except EivlholeError as exc:
+            self.set_status(str(exc), error=True)
+            return
+        path = paths.config_file()
+        if not path.exists():
+            path.write_text("[defaults]\n\n[hosts]\n\n[jobs]\n", encoding="utf-8")
+        try:
+            code = self._run_editor(cmd, path)
+        except OSError as exc:
+            self.set_status(f"editor failed: {exc}", error=True)
+            return
+        self.reload()
+        if code:
+            self.set_status(f"editor exited with {code}; config reloaded", error=True)
+        elif "required" not in str(self.query_one("#status", Static).content):
+            self.set_status("config reloaded")
+
+    # --- test host ----------------------------------------------------
+
+    def action_test_host(self) -> None:
+        name = self.selected_host()
+        if not name or name not in self.config.hosts:
+            self.set_status("no host selected; add one with `eivlhole hosts add`", error=True)
+            return
+        self.test_host_worker(name)
+
+    @work(exclusive=True, group="host")
+    async def test_host_worker(self, name: str) -> None:
+        self.set_status(f"testing {name}...")
+        try:
+            target = target_from_host(self.config.hosts[name])
+            cwd = await keys.test_connection(
+                target, known_hosts=paths.known_hosts_file(), prompt_trust=None
+            )
+        except EivlholeError as exc:
+            self.set_status(str(exc), error=True)
+            self.write_log(f"test {name}: {exc}")
+            return
+        except Exception as exc:  # noqa: BLE001 - a worker must never crash the app
+            log.exception("test host failed")
+            self.set_status(f"test {name} failed: {exc}", error=True)
+            return
+        self.set_status(f"OK: {name} (sftp cwd {cwd})")
+        self.write_log(f"test {name}: OK")
+        self.reload()

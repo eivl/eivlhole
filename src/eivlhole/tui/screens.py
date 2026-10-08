@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Input, Label, Static
 
 HELP_TEXT = """\
 eivlhole keys
@@ -38,3 +38,53 @@ class HelpScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+
+class TextPrompt(ModalScreen[str | None]):
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, *, placeholder: str = "", value: str = "") -> None:
+        super().__init__()
+        self.title_text = title
+        self.placeholder = placeholder
+        self.initial = value
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="prompt"):
+            yield Label(self.title_text)
+            yield Input(value=self.initial, placeholder=self.placeholder, id="value")
+            yield Label("Enter = ok   Esc = cancel")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip())
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ConfirmScreen(ModalScreen[bool]):
+    BINDINGS = [
+        Binding("y", "yes", "Yes"),
+        Binding("n", "no", "No"),
+        Binding("escape", "no", "Cancel", show=False),
+    ]
+
+    def __init__(self, title: str, body: str) -> None:
+        super().__init__()
+        self.title_text = title
+        self.body = body
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm"):
+            yield Label(self.title_text)
+            yield Static(self.body, id="confirm-body", markup=False)
+            yield Label("y = yes   n = no")
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
