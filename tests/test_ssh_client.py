@@ -218,3 +218,26 @@ async def test_connect_times_out_against_silent_listener(client_key, tmp_path, m
     finally:
         server.close()
         await server.wait_closed()
+
+
+async def test_connect_sets_keepalive(target, tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_connect(*args, **kwargs):
+        seen.update(kwargs)
+        raise asyncssh.PermissionDenied("x")
+
+    monkeypatch.setattr(client.asyncssh, "connect", fake_connect)
+    with pytest.raises(AuthError):
+        async with client.connect(target, known_hosts=tmp_path / "kh"):
+            pass
+    assert seen["keepalive_interval"] == 15 and seen["keepalive_count_max"] == 3
+
+
+async def test_unattended_changed_key_says_changed(target, tmp_path):
+    kh = tmp_path / "kh"
+    other = asyncssh.generate_private_key("ssh-ed25519")
+    client.pin_host_key(target, other, kh)
+    with pytest.raises(HostKeyError, match="changed"):
+        async with client.connect(target, known_hosts=kh, prompt_trust=None):
+            pass

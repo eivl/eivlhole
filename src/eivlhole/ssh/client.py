@@ -18,6 +18,9 @@ from eivlhole.errors import AuthError, ConnectError, HostKeyError
 log = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT = 15.0
+# Detect a peer that stops answering mid-session instead of hanging forever.
+KEEPALIVE_INTERVAL = 15
+KEEPALIVE_COUNT_MAX = 3
 
 
 @dataclass(frozen=True)
@@ -160,19 +163,21 @@ async def connect(
                 known_hosts=str(kh),
                 config=[],
                 connect_timeout=CONNECT_TIMEOUT,
+                keepalive_interval=KEEPALIVE_INTERVAL,
+                keepalive_count_max=KEEPALIVE_COUNT_MAX,
                 **auth,
             )
             break
         except asyncssh.HostKeyNotVerifiable as exc:
-            if attempt == 2 or prompt_trust is None:
-                raise HostKeyError(
-                    f"host key for {target.label} is not trusted; run "
-                    f"`eivlhole hosts trust <name>` first"
-                ) from exc
             if find_pinned(target, kh) is not None:
                 raise HostKeyError(
                     f"host key for {target.label} has changed. If this is expected, run "
                     f"`eivlhole hosts trust --replace`; otherwise someone may be intercepting."
+                ) from exc
+            if attempt == 2 or prompt_trust is None:
+                raise HostKeyError(
+                    f"host key for {target.label} is not trusted; run "
+                    f"`eivlhole hosts trust <name>` first"
                 ) from exc
             key = await fetch_host_key(target)
             if not prompt_trust(target, fingerprint(key)):
