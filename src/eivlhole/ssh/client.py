@@ -90,7 +90,8 @@ def pin_host_key(
 
 async def fetch_host_key(target: SSHTarget) -> asyncssh.SSHKey:
     try:
-        key = await asyncssh.get_server_host_key(target.hostname, target.port)
+        # config=[]: the tool's own config is the only source of host settings.
+        key = await asyncssh.get_server_host_key(target.hostname, target.port, config=[])
     except (OSError, asyncssh.Error) as exc:
         raise ConnectError(f"cannot reach {target.label}: {exc}") from exc
     if key is None:
@@ -130,8 +131,10 @@ async def connect(
     conn: asyncssh.SSHClientConnection | None = None
     for attempt in (1, 2):
         try:
+            # config=[]: the tool's own config is the only source of host settings.
             conn = await asyncssh.connect(
-                target.hostname, target.port, username=target.user, known_hosts=str(kh), **auth
+                target.hostname, target.port, username=target.user, known_hosts=str(kh),
+                config=[], **auth,
             )
             break
         except asyncssh.HostKeyNotVerifiable as exc:

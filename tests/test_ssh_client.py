@@ -114,3 +114,18 @@ async def test_connection_refused_is_connect_error(tmp_path, client_key):
 async def test_fetch_host_key(target, ssh_server):
     key = await client.fetch_host_key(target)
     assert client.fingerprint(key) == ssh_server.host_key.get_fingerprint()
+
+
+async def test_user_ssh_config_is_ignored(target, ssh_server, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir(exist_ok=True)
+    config_text = (
+        "Host 127.0.0.1\n    HostName 127.0.0.2\n    Port 1\n    User nobody\n"
+    )
+    (ssh_dir / "config").write_text(config_text, encoding="utf-8")
+    async with client.connect(target, known_hosts=ssh_server.known_hosts) as conn:
+        assert conn.get_extra_info("peername")[1] == ssh_server.port
+    key = await client.fetch_host_key(target)
+    assert client.fingerprint(key) == ssh_server.host_key.get_fingerprint()
