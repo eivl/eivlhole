@@ -9,8 +9,11 @@ import typer
 from eivlhole import __version__, paths
 from eivlhole.cli.common import State, setup_logging
 from eivlhole.cli.config_cmd import config_app
+from eivlhole.cli.holidays_cmd import holidays_app
 from eivlhole.cli.hosts import hosts_app
+from eivlhole.cli.jobs import jobs_app
 from eivlhole.cli.keys import keys_app
+from eivlhole.cli.run_cmd import run
 from eivlhole.cli.server import server_app
 from eivlhole.cli.transfer_cmd import receive, send
 
@@ -26,6 +29,9 @@ app.add_typer(config_app, name="config")
 app.add_typer(server_app, name="server")
 app.command("send")(send)
 app.command("receive")(receive)
+app.add_typer(jobs_app, name="jobs")
+app.add_typer(holidays_app, name="holidays")
+app.command("run")(run)
 
 
 def _version_callback(value: bool) -> None:
