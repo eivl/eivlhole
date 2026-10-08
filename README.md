@@ -1,5 +1,8 @@
 # eivlhole
 
+[![CI](https://github.com/eivl/eivlhole/actions/workflows/ci.yml/badge.svg)](https://github.com/eivl/eivlhole/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/eivlhole.svg)](https://pypi.org/project/eivlhole/)
+
 Wormhole-style file transfer over SSH for networks without internet access,
 plus scheduled unattended delivery (Plan 2) and a terminal UI (Plan 3).
 
@@ -8,7 +11,13 @@ transfers; senders get a short code, receivers type it.
 
 ## Install
 
-Requires Python 3.13. With an Artifactory PyPI mirror:
+Requires Python 3.13. From PyPI, or from an Artifactory mirror of it:
+
+```
+uv tool install eivlhole
+```
+
+With an explicit Artifactory index:
 
 ```
 uv tool install --index-url https://ARTIFACTORY/api/pypi/pypi/simple eivlhole
