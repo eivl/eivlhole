@@ -27,7 +27,9 @@ def generate_keypair(
     key = asyncssh.generate_private_key(
         "ssh-ed25519", comment=comment or f"eivlhole@{socket.gethostname()}"
     )
-    key.write_private_key(str(private_path))
+    fd = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(key.export_private_key())
     key.write_public_key(str(public_path))
     if os.name == "posix":
         os.chmod(private_path, 0o600)
@@ -38,7 +40,10 @@ def generate_keypair(
 def public_key_line(public_path: Path) -> str:
     if not public_path.exists():
         raise EivlholeError(f"no public key at {public_path}; run `eivlhole keys init` first")
-    return public_path.read_text(encoding="utf-8").strip().splitlines()[0]
+    text = public_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise EivlholeError(f"{public_path} is empty; run `eivlhole keys init --force`")
+    return text.splitlines()[0]
 
 
 def _same_key(a: str, b: str) -> bool:
@@ -68,10 +73,9 @@ async def enrol(
         text = existing.decode("utf-8", errors="replace")
         if any(line.strip() and _same_key(line, public_line) for line in text.splitlines()):
             return False
-        if existing and not existing.endswith(b"\n"):
-            existing += b"\n"
-        async with s.open(AUTHORIZED_KEYS, "wb") as f:
-            await f.write(existing + public_line.encode("utf-8") + b"\n")
+        prefix = b"\n" if existing and not existing.endswith(b"\n") else b""
+        async with s.open(AUTHORIZED_KEYS, "ab") as f:
+            await f.write(prefix + public_line.encode("utf-8") + b"\n")
         try:
             await s.chmod(AUTHORIZED_KEYS, 0o600)
         except asyncssh.SFTPError:

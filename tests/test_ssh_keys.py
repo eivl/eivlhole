@@ -60,3 +60,10 @@ async def test_enrol_bad_password(ssh_server, tmp_path):
     t = SSHTarget(ssh_server.host, ssh_server.port, ssh_server.user, priv)
     with pytest.raises(AuthError):
         await keys.enrol(t, "wrong", keys.public_key_line(pub), known_hosts=ssh_server.known_hosts)
+
+
+def test_public_key_line_empty_file(tmp_path):
+    pub = tmp_path / "id.pub"
+    pub.write_text("")
+    with pytest.raises(EivlholeError, match="empty"):
+        keys.public_key_line(pub)
