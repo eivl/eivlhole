@@ -7,6 +7,7 @@ import logging
 import posixpath
 import secrets
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -14,12 +15,12 @@ from pathlib import Path
 import asyncssh
 
 from eivlhole.config import Config, JobConfig
-from eivlhole.errors import ConfigError, EivlholeError
+from eivlhole.errors import ConfigError, ConnectError, EivlholeError
 from eivlhole.history import History
 from eivlhole.jobs.calendar import decide
 from eivlhole.jobs.selector import select_files
 from eivlhole.mailbox.base import ProgressFn
-from eivlhole.ssh.client import sftp, target_from_host
+from eivlhole.ssh.client import SSHTarget, sftp, target_from_host
 from eivlhole.transfer import _safe, sha256_file
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,8 @@ EXIT_FAILED = 1
 EXIT_SKIPPED = 2
 EXIT_PARTIAL = 3
 BACKOFF = (1.0, 2.0, 4.0)
+# Waits before re-trying a failed connect; host-key and auth errors are never retried.
+CONNECT_BACKOFF = (10.0, 30.0, 60.0)
 BLOCK_SIZE = 65536
 
 SleepFn = Callable[[float], Awaitable[None]]
@@ -165,6 +168,31 @@ async def _send_one(
         return
 
 
+async def _open_sftp(
+    stack: AsyncExitStack, target: SSHTarget, known_hosts: Path | None, sleep: SleepFn
+) -> asyncssh.SFTPClient:
+    """Open the SFTP session, retrying ConnectError with CONNECT_BACKOFF."""
+    attempts = len(CONNECT_BACKOFF) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return await stack.enter_async_context(
+                sftp(target, known_hosts=known_hosts, prompt_trust=None)
+            )
+        except ConnectError as exc:
+            if attempt == attempts:
+                raise ConnectError(f"cannot connect after {attempts} attempts: {exc}") from exc
+            delay = CONNECT_BACKOFF[attempt - 1]
+            log.warning(
+                "connect to %s failed (attempt %d): %s; retrying in %gs",
+                target.label,
+                attempt,
+                exc,
+                delay,
+            )
+            await sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def apply_on_success(policy: str, local: Path) -> None:
     if policy == "keep":
         return
@@ -277,7 +305,8 @@ async def run_job(
         else:
             target = target_from_host(host)
             try:
-                async with sftp(target, known_hosts=known_hosts, prompt_trust=None) as s:
+                async with AsyncExitStack() as stack:
+                    s = await _open_sftp(stack, target, known_hosts, sleep)
                     await s.makedirs(job.remote_dir, exist_ok=True)
                     for o in outcomes:
                         if o.status != "pending":

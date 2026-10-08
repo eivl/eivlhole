@@ -164,8 +164,9 @@ async def test_run_job_connect_failure_marks_all_failed(ssh_server, client_key, 
     job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)])
     cfg = make_config(ssh_server, client_key, job, port=1)
     hist = History(tmp_path / "h.sqlite")
+    sleep, _ = no_sleep_factory()
     result = await runner.run_job(
-        "j", cfg, history=hist, today=WEEKDAY, known_hosts=ssh_server.known_hosts
+        "j", cfg, history=hist, today=WEEKDAY, known_hosts=ssh_server.known_hosts, sleep=sleep
     )
     assert result.status == "failed" and result.exit_code == 1
     assert result.outcomes[0].status == "failed" and "cannot connect" in result.outcomes[0].error
@@ -435,3 +436,29 @@ async def test_run_job_retries_hash_and_upload_per_attempt(
     )
     assert result.exit_code == 0 and result.outcomes[0].attempts == 3
     assert seen == [0, 0, 0] and calls == [1.0, 2.0]
+
+
+async def test_run_job_retries_connect_failure(ssh_server, client_key, tmp_path):
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)])
+    cfg = make_config(ssh_server, client_key, job, port=1)
+    sleep, calls = no_sleep_factory()
+    result = await runner.run_job(
+        "j", cfg, history=None, today=WEEKDAY, known_hosts=ssh_server.known_hosts, sleep=sleep
+    )
+    assert calls == [10.0, 30.0, 60.0]
+    assert result.exit_code == 1 and "after 4 attempts" in result.reason
+    assert "after 4 attempts" in result.outcomes[0].error
+
+
+async def test_run_job_host_key_error_not_retried(ssh_server, client_key, incoming, tmp_path):
+    f = tmp_path / "x.txt"
+    f.write_text("x")
+    job = JobConfig(name="j", remote_dir="/incoming", files=[str(f)])
+    cfg = make_config(ssh_server, client_key, job)
+    sleep, calls = no_sleep_factory()
+    result = await runner.run_job(
+        "j", cfg, history=None, today=WEEKDAY, known_hosts=tmp_path / "empty_kh", sleep=sleep
+    )
+    assert calls == [] and result.exit_code == 1 and "hosts trust" in result.reason
