@@ -83,3 +83,39 @@ def test_schedule_unknown_job(config_dir):
     write_config()
     r = runner.invoke(app, ["schedule", "print", "ghost", "--platform", "linux"])
     assert r.exit_code == 1 and "unknown job 'ghost'" in r.output
+
+
+def test_schedule_install_nonzero_exit_prints_manual(config_dir, monkeypatch):
+    write_config()
+    monkeypatch.setattr(
+        base, "default_run", FakeRun(returncode=1, stdout="ERROR: Access is denied.")
+    )
+    monkeypatch.setattr(base, "resolve_command", lambda: ["/usr/local/bin/eivlhole"])
+    r = runner.invoke(app, ["schedule", "install", "reports", "--platform", "windows"])
+    assert r.exit_code == 1
+    assert "could not register" in r.output
+    assert "Access is denied" in r.output
+    assert "schtasks /Create" in r.output
+    r = runner.invoke(app, ["schedule", "uninstall", "reports", "--platform", "windows"])
+    assert r.exit_code == 1
+    assert "could not remove" in r.output
+    assert "schtasks /Delete" in r.output
+
+
+def test_schedule_print_uses_cli_config_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv(paths.ENV_CONFIG_DIR, "")
+    d = tmp_path / "other-cfg"
+    d.mkdir()
+    (d / "config.toml").write_text(
+        '[defaults]\nhost = "drop"\n\n[hosts.drop]\nhostname = "h"\nuser = "u"\n\n'
+        '[jobs.reports]\nremote_dir = "/incoming"\n'
+        'schedule = { time = "07:00", days = ["tue", "thu"] }\n'
+    )
+    monkeypatch.setattr(base, "resolve_command", lambda: ["/usr/local/bin/eivlhole"])
+    r = runner.invoke(
+        app, ["--config-dir", str(d), "schedule", "print", "reports", "--platform", "linux"]
+    )
+    assert r.exit_code == 0, r.output
+    flat = " ".join(r.output.split())  # console wraps long lines
+    assert f"--config-dir {d}" in flat
+    assert "--unattended run reports" in flat
