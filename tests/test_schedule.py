@@ -1,3 +1,4 @@
+import os
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -78,6 +79,19 @@ def test_resolve_command_falls_back_to_module(monkeypatch):
     )
 
 
+def test_resolve_command_is_absolute(monkeypatch):
+    monkeypatch.setattr(base.shutil, "which", lambda name: "rel/eivlhole")
+    cmd = base.resolve_command()
+    assert os.path.isabs(cmd[0]) and cmd[0].endswith("eivlhole")
+
+
+def test_build_spec_resolves_relative_config_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(base, "resolve_command", lambda: ["/usr/local/bin/eivlhole"])
+    monkeypatch.chdir(tmp_path)
+    spec = base.build_spec(JOB, Path("cfg"))
+    assert str((tmp_path / "cfg").resolve()) in spec.command
+
+
 def test_windows_xml_golden():
     xml = windows.TaskScheduler(start_date=date(2026, 10, 8)).render(spec_for())
     assert xml.startswith('<?xml version="1.0" encoding="UTF-16"?>')
@@ -121,7 +135,7 @@ def test_windows_install_failure_returns_manual(config_dir, monkeypatch):
     result = windows.TaskScheduler(start_date=date(2026, 10, 8)).install(spec_for())
     assert not result.ok and "Access is denied" in result.output
     assert "schtasks /Create /TN eivlhole\\reports /XML" in result.manual
-    assert "S4U" in result.manual
+    assert "S4U" in result.manual and "local disks" in result.manual
     assert str(config_dir / "schedule" / "reports.xml") in result.manual
 
 

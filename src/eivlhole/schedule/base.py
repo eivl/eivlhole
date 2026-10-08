@@ -69,11 +69,13 @@ def run_tool(args: list[str], *, input_text: str | None = None) -> tuple[int | N
 def resolve_command() -> list[str]:
     exe = shutil.which("eivlhole")
     if exe:
-        return [exe]
+        return [os.path.abspath(exe)]
     return [sys.executable, "-m", "eivlhole"]
 
 
 def build_spec(job: JobConfig, config_dir: Path) -> ScheduleSpec:
+    # The scheduler starts the task in another working directory.
+    config_dir = Path(config_dir).resolve()
     if not job.schedule.days:
         raise EivlholeError(
             f'job \'{job.name}\' has no schedule.days; add e.g. days = ["tue", "thu"]'

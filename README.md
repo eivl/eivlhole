@@ -152,11 +152,14 @@ task XML or crontab line so an administrator can register it by hand. On Linux
 it also refuses to write when `crontab -l` fails for any reason other than "no
 crontab". `schedule print JOB` shows the same at any time. The Windows task
 runs as S4U (no stored password): the tool's file-based key works, but keys
-kept in a credential manager or on a redirected network profile do not.
+kept in a credential manager or on a redirected network profile do not. For
+the same reason, job files and pattern directories must be on local disks: an
+S4U task cannot reach mapped drives or UNC paths.
 
 A remote file with the same name is replaced atomically on each run.
 `on_success = "move"` moves sent files into a `sent/` folder next to them;
-`"delete"` removes them; `"keep"` (default) leaves them.
+`"delete"` removes them; `"keep"` (default) leaves them. Recursive patterns
+never look inside `sent/` folders.
 
 ## Transaction log
 

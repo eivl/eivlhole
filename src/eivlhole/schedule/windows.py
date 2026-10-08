@@ -93,7 +93,8 @@ class TaskScheduler:
             f"or import that XML file in Task Scheduler: Action > Import Task.\n"
             "The task runs as S4U (no stored password): the tool's file-based SSH key works; "
             "keys kept in a credential manager, on a redirected network profile, or proxies "
-            "needing Kerberos do not."
+            "needing Kerberos do not, and job files or pattern directories must be on local "
+            "disks (no mapped drives or UNC paths)."
         )
 
     def install(self, spec: ScheduleSpec) -> ActionResult:
