@@ -14,6 +14,7 @@ from eivlhole.cli.hosts import hosts_app
 from eivlhole.cli.jobs import jobs_app
 from eivlhole.cli.keys import keys_app
 from eivlhole.cli.run_cmd import run
+from eivlhole.cli.schedule_cmd import schedule_app
 from eivlhole.cli.server import server_app
 from eivlhole.cli.transfer_cmd import receive, send
 
@@ -32,6 +33,7 @@ app.command("receive")(receive)
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(holidays_app, name="holidays")
 app.command("run")(run)
+app.add_typer(schedule_app, name="schedule")
 
 
 def _version_callback(value: bool) -> None:
