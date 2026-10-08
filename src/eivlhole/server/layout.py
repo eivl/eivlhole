@@ -62,9 +62,13 @@ def sshd_snippet(root: Path, user: str) -> str:
 # Add to /etc/ssh/sshd_config, then `systemctl reload sshd`:
 Match User {user}
     ChrootDirectory {root}
-    ForceCommand internal-sftp
+    # -d /home: start in the home dir so `keys enrol` writes /home/.ssh/authorized_keys,
+    # which sshd reads before the chroot as {root / HOME}/.ssh/authorized_keys.
+    ForceCommand internal-sftp -d /home
     AllowTcpForwarding no
     X11Forwarding no
+    # needed only while clients run `eivlhole keys enrol`; afterwards run
+    # `passwd -l {user}` and remove this line
     PasswordAuthentication yes
 #
 # Clients then use:

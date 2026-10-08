@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import posixpath
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,9 +26,11 @@ class FakeServer:
     host_key: asyncssh.SSHKey
     known_hosts: Path
     authorized: set[str] = field(default_factory=set)
+    sftp_cwd: bytes = b"/home"
+    offered: list[str] = field(default_factory=list)
 
     def authorized_keys_file(self) -> Path:
-        return self.root / ".ssh" / "authorized_keys"
+        return self.root / "home" / ".ssh" / "authorized_keys"
 
     def accepts(self, key: asyncssh.SSHKey) -> bool:
         wanted = key.export_public_key().decode().split()[:2]
@@ -42,6 +45,7 @@ class FakeServer:
 def ssh_server(tmp_path: Path):
     root = tmp_path / "srv"
     root.mkdir()
+    (root / "home").mkdir()
     host_key = asyncssh.generate_private_key("ssh-ed25519")
     server = FakeServer(
         host="127.0.0.1",
@@ -67,11 +71,23 @@ def ssh_server(tmp_path: Path):
             return True
 
         def validate_public_key(self, username: str, key: asyncssh.SSHKey) -> bool:
+            server.offered.append(key.export_public_key().decode().strip())
             return username == server.user and server.accepts(key)
 
     class SFTP(asyncssh.SFTPServer):
+        """Models sshd's `ChrootDirectory root` + `ForceCommand internal-sftp -d /home`.
+
+        Absolute paths resolve inside the chroot; relative paths resolve against
+        the working directory /home, as they do for sftp-server after its chdir.
+        """
+
         def __init__(self, chan: asyncssh.SSHServerChannel):
             super().__init__(chan, chroot=str(root))
+
+        def map_path(self, path: bytes) -> bytes:
+            if not path.startswith(b"/"):
+                path = posixpath.join(server.sftp_cwd, path)
+            return super().map_path(path)
 
     loop = asyncio.new_event_loop()
     ready = threading.Event()

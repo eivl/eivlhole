@@ -37,7 +37,8 @@ def test_sshd_snippet(tmp_path):
     text = layout.sshd_snippet(tmp_path / "srv", "eivlhole")
     assert "Match User eivlhole" in text
     assert f"ChrootDirectory {tmp_path / 'srv'}" in text
-    assert "ForceCommand internal-sftp" in text
+    assert "ForceCommand internal-sftp -d /home" in text
+    assert "passwd -l eivlhole" in text
     assert 'drop_root = "/"' in text
 
 

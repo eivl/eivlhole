@@ -103,17 +103,27 @@ async def fetch_host_key(target: SSHTarget) -> asyncssh.SSHKey:
 
 
 def _auth_kwargs(target: SSHTarget, password: str | None) -> dict:
-    kwargs: dict = {"agent_path": () if target.use_agent else None}
+    """asyncssh auth options that never fall back to ~/.ssh/id_* keys.
+
+    asyncssh semantics: client_keys=None disables public-key auth (agent included);
+    client_keys=[] means "load the default ~/.ssh keys"; agent_path=None still opens
+    Pageant/the Windows agent, so agent_identities restricts which agent keys are offered.
+    """
     if password is not None:
-        kwargs["password"] = password
-        kwargs["client_keys"] = []
-        return kwargs
-    if target.key_path is not None and target.key_path.exists():
-        kwargs["client_keys"] = [str(target.key_path)]
-    elif not target.use_agent:
+        return {"password": password, "client_keys": None, "agent_path": None}
+    has_key = target.key_path is not None and target.key_path.exists()
+    if not has_key and not target.use_agent:
         raise AuthError(f"no private key at {target.key_path}; run `eivlhole keys init` first")
-    else:
-        kwargs["client_keys"] = []
+    if target.use_agent:
+        if has_key:
+            return {"client_keys": [str(target.key_path)], "agent_path": ()}
+        # Agent only: client_keys=None would disable the agent too, so [] is the
+        # only option; asyncssh may then also try default ~/.ssh keys.
+        return {"client_keys": [], "agent_path": ()}
+    kwargs: dict = {"client_keys": [str(target.key_path)], "agent_path": None}
+    pub = Path(str(target.key_path) + ".pub")
+    if pub.exists():
+        kwargs["agent_identities"] = [str(pub)]
     return kwargs
 
 

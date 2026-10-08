@@ -39,12 +39,12 @@ async def test_enrol_then_key_auth_works(ssh_server, tmp_path):
     assert await keys.enrol(t, "pw", line, known_hosts=ssh_server.known_hosts) is True
     assert ssh_server.authorized_keys_file().read_text().strip() == line
     assert await keys.enrol(t, "pw", line, known_hosts=ssh_server.known_hosts) is False
-    assert await keys.test_connection(t, known_hosts=ssh_server.known_hosts) == "/"
+    assert await keys.test_connection(t, known_hosts=ssh_server.known_hosts) == "/home"
 
 
 async def test_enrol_appends_to_existing_file(ssh_server, tmp_path):
     f = ssh_server.authorized_keys_file()
-    f.parent.mkdir()
+    f.parent.mkdir(parents=True)
     f.write_text("ssh-ed25519 AAAAexisting other@host")  # no trailing newline
     priv, pub = keys.generate_keypair(tmp_path / "id")
     t = SSHTarget(ssh_server.host, ssh_server.port, ssh_server.user, priv)
@@ -67,3 +67,31 @@ def test_public_key_line_empty_file(tmp_path):
     pub.write_text("")
     with pytest.raises(EivlholeError, match="empty"):
         keys.public_key_line(pub)
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or os.geteuid() == 0, reason="needs a non-writable directory"
+)
+async def test_enrol_without_home_cwd_explains_internal_sftp_d(ssh_server, tmp_path):
+    # Without `-d /home` the cwd inside the chroot is / (root-owned, not writable).
+    ssh_server.sftp_cwd = b"/"
+    os.chmod(ssh_server.root, 0o555)
+    try:
+        priv, pub = keys.generate_keypair(tmp_path / "id")
+        t = SSHTarget(ssh_server.host, ssh_server.port, ssh_server.user, priv)
+        with pytest.raises(EivlholeError, match="internal-sftp -d") as info:
+            await keys.enrol(t, "pw", keys.public_key_line(pub), known_hosts=ssh_server.known_hosts)
+        assert "working directory /" in str(info.value)
+    finally:
+        os.chmod(ssh_server.root, 0o755)
+
+
+async def test_enrol_maps_permission_denied(ssh_server, tmp_path, monkeypatch):
+    async def denied(self, *args, **kwargs):
+        raise asyncssh.SFTPPermissionDenied("Permission denied")
+
+    monkeypatch.setattr(asyncssh.SFTPClient, "makedirs", denied)
+    priv, pub = keys.generate_keypair(tmp_path / "id")
+    t = SSHTarget(ssh_server.host, ssh_server.port, ssh_server.user, priv)
+    with pytest.raises(EivlholeError, match="internal-sftp -d"):
+        await keys.enrol(t, "pw", keys.public_key_line(pub), known_hosts=ssh_server.known_hosts)

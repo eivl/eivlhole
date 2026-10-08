@@ -48,7 +48,7 @@ async def test_connect_with_key_and_pinned_host(target, ssh_server):
     async with client.connect(target, known_hosts=ssh_server.known_hosts) as conn:
         assert conn.get_extra_info("peername")[1] == ssh_server.port
     async with client.sftp(target, known_hosts=ssh_server.known_hosts) as s:
-        assert await s.getcwd() == "/"
+        assert await s.getcwd() == "/home"
 
 
 async def test_connect_with_password(ssh_server, tmp_path):
@@ -127,3 +127,71 @@ async def test_user_ssh_config_is_ignored(target, ssh_server, tmp_path, monkeypa
         assert conn.get_extra_info("peername")[1] == ssh_server.port
     key = await client.fetch_host_key(target)
     assert client.fingerprint(key) == ssh_server.host_key.get_fingerprint()
+
+
+def test_auth_kwargs_password_disables_keys(tmp_path):
+    key = tmp_path / "id"
+    key.write_text("x")
+    kw = client._auth_kwargs(SSHTarget("h", 22, "u", key), "pw")
+    assert kw["password"] == "pw"
+    assert kw["client_keys"] is None
+    assert kw["agent_path"] is None
+    assert "agent_identities" not in kw
+
+
+def test_auth_kwargs_key_only_restricts_agent(tmp_path):
+    key = tmp_path / "id"
+    key.write_text("x")
+    (tmp_path / "id.pub").write_text("ssh-ed25519 AAAA")
+    kw = client._auth_kwargs(SSHTarget("h", 22, "u", key), None)
+    assert kw["client_keys"] == [str(key)]
+    assert kw["agent_path"] is None
+    assert kw["agent_identities"] == [str(key) + ".pub"]
+
+
+def test_auth_kwargs_key_with_agent(tmp_path):
+    key = tmp_path / "id"
+    key.write_text("x")
+    kw = client._auth_kwargs(SSHTarget("h", 22, "u", key, use_agent=True), None)
+    assert kw == {"client_keys": [str(key)], "agent_path": ()}
+
+
+def test_auth_kwargs_agent_without_key(tmp_path):
+    kw = client._auth_kwargs(SSHTarget("h", 22, "u", tmp_path / "missing", use_agent=True), None)
+    assert kw == {"client_keys": [], "agent_path": ()}
+
+
+def test_auth_kwargs_no_key_no_agent(tmp_path):
+    with pytest.raises(AuthError, match="keys init"):
+        client._auth_kwargs(SSHTarget("h", 22, "u", tmp_path / "missing"), None)
+
+
+def _default_home_key(tmp_path, monkeypatch) -> str:
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    key.write_private_key(str(home / ".ssh" / "id_ed25519"))
+    key.write_public_key(str(home / ".ssh" / "id_ed25519.pub"))
+    return key.export_public_key().decode().strip()
+
+
+async def test_key_auth_ignores_default_home_keys(target, ssh_server, tmp_path, monkeypatch):
+    default_key = _default_home_key(tmp_path, monkeypatch)
+    async with client.connect(target, known_hosts=ssh_server.known_hosts):
+        pass
+    assert ssh_server.offered
+    assert default_key not in ssh_server.offered
+
+
+async def test_password_auth_offers_no_keys(ssh_server, tmp_path, monkeypatch):
+    default_key = _default_home_key(tmp_path, monkeypatch)
+    wrong = tmp_path / "wrong"
+    asyncssh.generate_private_key("ssh-ed25519").write_private_key(str(wrong))
+    t = SSHTarget(ssh_server.host, ssh_server.port, ssh_server.user, wrong)
+    async with client.connect(t, password="pw", known_hosts=ssh_server.known_hosts):
+        pass
+    assert default_key not in ssh_server.offered
+    assert ssh_server.offered == []

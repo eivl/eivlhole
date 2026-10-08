@@ -61,7 +61,19 @@ async def enrol(
     async with sftp(
         target, password=password, known_hosts=known_hosts, prompt_trust=prompt_trust
     ) as s:
-        await s.makedirs(".ssh", exist_ok=True)
+        # Relative paths resolve against the SFTP working directory. On a chrooted
+        # drop host that is /home only with `ForceCommand internal-sftp -d /home`.
+        try:
+            await s.makedirs(".ssh", exist_ok=True)
+        except asyncssh.SFTPPermissionDenied as exc:
+            try:
+                cwd = await s.getcwd()
+            except asyncssh.SFTPError:
+                cwd = "?"
+            raise EivlholeError(
+                f"cannot create .ssh in the SFTP working directory {cwd}; on a chrooted "
+                f"drop host use `ForceCommand internal-sftp -d /home`"
+            ) from exc
         try:
             await s.chmod(".ssh", 0o700)
         except asyncssh.SFTPError:
