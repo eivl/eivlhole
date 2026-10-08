@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 from eivlhole import paths
 from eivlhole.cli.app import app
 from eivlhole.config import load_config
+from eivlhole.history import History
 
 runner = CliRunner()
 
@@ -135,3 +136,33 @@ def test_holidays_check_and_list(config_dir, ssh_server, client_key, tmp_path):
     assert r.exit_code == 0 and "Constitution Day" in r.output and "2026-12-24" in r.output
     r = runner.invoke(app, ["holidays", "check", "not-a-date"])
     assert r.exit_code == 1 and "YYYY-MM-DD" in r.output
+
+
+def test_run_unknown_job_records_failed_run(config_dir, ssh_server, client_key, tmp_path):
+    setup(config_dir, ssh_server, client_key, tmp_path)
+    r = runner.invoke(app, ["run", "nope"])
+    assert r.exit_code == 1
+    with History(paths.history_file()) as hist:
+        runs = hist.runs()
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.kind == "job" and run.job == "nope" and run.status == "failed"
+    assert run.exit_code == 1 and "unknown job" in run.error
+
+
+def test_run_bad_config_records_failed_run(config_dir, ssh_server, client_key, tmp_path):
+    paths.config_file().write_text("[jobs.reports\n")
+    r = runner.invoke(app, ["run", "reports"])
+    assert r.exit_code == 1
+    with History(paths.history_file()) as hist:
+        runs = hist.runs()
+    assert len(runs) == 1 and runs[0].job == "reports" and runs[0].status == "failed"
+
+
+def test_run_job_failure_writes_one_run(config_dir, ssh_server, client_key, tmp_path):
+    setup(config_dir, ssh_server, client_key, tmp_path)
+    paths.known_hosts_file().write_text("")
+    r = runner.invoke(app, ["run", "reports", "--date", "2026-10-08"])
+    assert r.exit_code == 1
+    with History(paths.history_file()) as hist:
+        assert len(hist.runs()) == 1

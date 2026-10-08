@@ -1,5 +1,6 @@
 """eivlhole run JOB: unattended delivery."""
 
+import logging
 from datetime import date, timedelta
 
 import typer
@@ -8,6 +9,7 @@ from rich.table import Table
 
 from eivlhole.cli.common import State, console, get_state, handle_errors, run_async
 from eivlhole.cli.transfer_cmd import transfer_progress
+from eivlhole.config import Config
 from eivlhole.errors import EivlholeError
 from eivlhole.jobs import runner
 
@@ -24,6 +26,17 @@ def parse_date(text: str) -> date:
         raise EivlholeError(f"invalid date {text!r}; use YYYY-MM-DD, today or yesterday") from exc
 
 
+def record_failed_start(state: State, job: str, exc: EivlholeError) -> None:
+    """Best-effort history row for a run that failed before run_job could write one."""
+    try:
+        with state.history() as hist:
+            if hist is not None:
+                rid = hist.start_run("job", job=job, host=None)
+                hist.finish_run(rid, "failed", exit_code=exc.exit_code, error=str(exc))
+    except Exception:  # noqa: BLE001 - history must never mask the original error
+        logging.getLogger("eivlhole").exception("history write failed")
+
+
 @handle_errors
 def run(
     ctx: typer.Context,
@@ -37,10 +50,8 @@ def run(
     Exit codes: 0 ok, 1 failed, 2 skipped, 3 partial.
     """
     state: State = get_state(ctx)
-    cfg = state.config
-    today = parse_date(date_) if date_ else None
 
-    async def go() -> runner.RunResult:
+    async def go(cfg: Config, today: date | None) -> runner.RunResult:
         with state.history() as hist, transfer_progress() as cb:
             return await runner.run_job(
                 job,
@@ -53,7 +64,14 @@ def run(
                 progress=cb,
             )
 
-    result = run_async(go())
+    try:
+        # run_job writes its own history row once it starts; anything raised before
+        # that (bad config, unknown job, bad --date) still leaves a failed run behind.
+        result = run_async(go(state.config, parse_date(date_) if date_ else None))
+    except EivlholeError as exc:
+        if not dry_run:
+            record_failed_start(state, job, exc)
+        raise
     for w in result.warnings:
         console.print(f"[yellow]warning:[/] {escape(w)}")
     if result.status == "skipped":
