@@ -54,17 +54,16 @@ def default_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[s
     return subprocess.run(args, **kwargs)
 
 
-def run_tool(args: list[str], *, input_text: str | None = None) -> tuple[int | None, str]:
-    """Run a scheduler binary. Returns (returncode or None if missing, combined output)."""
+def run_tool(args: list[str], *, input_text: str | None = None) -> tuple[int | None, str, str]:
+    """Run a scheduler binary. Returns (returncode or None if missing, stdout, stderr)."""
     kwargs: dict[str, Any] = {"capture_output": True, "text": True}
     if input_text is not None:
         kwargs["input"] = input_text
     try:
         proc = default_run(args, **kwargs)
     except FileNotFoundError:
-        return None, f"{args[0]}: not found on this machine"
-    out = (proc.stdout or "") + (proc.stderr or "")
-    return proc.returncode, out.strip()
+        return None, "", f"{args[0]}: not found on this machine"
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
 def resolve_command() -> list[str]:
@@ -82,7 +81,7 @@ def build_spec(job: JobConfig, config_dir: Path) -> ScheduleSpec:
     spec = ScheduleSpec(
         job=job.name,
         time=job.schedule.time,
-        days=list(job.schedule.days),
+        days=list(dict.fromkeys(job.schedule.days)),
         command=resolve_command()
         + ["--config-dir", str(config_dir), "--unattended", "run", job.name],
     )

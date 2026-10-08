@@ -27,8 +27,9 @@ def spec_for(job=JOB, command=CMD, config_dir="C:\\Users\\me\\AppData\\Roaming\\
 
 
 class FakeRun:
-    def __init__(self, returncode=0, stdout="", raise_missing=False):
+    def __init__(self, returncode=0, stdout="", raise_missing=False, stderr=""):
         self.returncode, self.stdout, self.raise_missing = returncode, stdout, raise_missing
+        self.stderr = stderr
         self.calls: list[tuple[list[str], dict]] = []
         self.stdin: list[str] = []
 
@@ -38,7 +39,9 @@ class FakeRun:
             raise FileNotFoundError(args[0])
         if "input" in kwargs:
             self.stdin.append(kwargs["input"])
-        return subprocess.CompletedProcess(args, self.returncode, stdout=self.stdout, stderr="")
+        return subprocess.CompletedProcess(
+            args, self.returncode, stdout=self.stdout, stderr=self.stderr
+        )
 
 
 def test_build_spec_uses_config_dir_and_unattended(monkeypatch):
@@ -53,6 +56,12 @@ def test_build_spec_uses_config_dir_and_unattended(monkeypatch):
         "reports",
     ]
     assert spec.days == ["tue", "thu"] and spec.time == "07:00"
+    dup = JobConfig(
+        name="reports",
+        remote_dir="/incoming",
+        schedule=ScheduleConfig(time="07:00", days=["tue", "tue", "thu"]),
+    )
+    assert base.build_spec(dup, Path("/c")).days == ["tue", "thu"]
 
 
 def test_build_spec_requires_days():
@@ -112,6 +121,7 @@ def test_windows_install_failure_returns_manual(config_dir, monkeypatch):
     result = windows.TaskScheduler(start_date=date(2026, 10, 8)).install(spec_for())
     assert not result.ok and "Access is denied" in result.output
     assert "schtasks /Create /TN eivlhole\\reports /XML" in result.manual
+    assert "S4U" in result.manual
     assert str(config_dir / "schedule" / "reports.xml") in result.manual
 
 
@@ -169,7 +179,7 @@ def test_cron_install_replaces_existing_and_keeps_others(monkeypatch):
 
 
 def test_cron_no_existing_crontab(monkeypatch):
-    run = FakeRun(returncode=1, stdout="")
+    run = FakeRun(returncode=1, stdout="", stderr="no crontab for me")
     monkeypatch.setattr(base, "default_run", run)
     text = linux.read_crontab()
     assert text == ""
@@ -189,3 +199,28 @@ def test_get_scheduler_by_platform():
     assert isinstance(base.get_scheduler("windows"), windows.TaskScheduler)
     assert isinstance(base.get_scheduler("linux"), linux.CronScheduler)
     assert base.get_scheduler().name in ("Task Scheduler", "cron")
+
+
+def test_cron_read_error_does_not_write(monkeypatch):
+    run = FakeRun(returncode=2, stderr="crontab: permission denied")
+    monkeypatch.setattr(base, "default_run", run)
+    result = linux.CronScheduler().install(spec_for(command=["/usr/local/bin/eivlhole"]))
+    assert not result.ok and "could not read" in result.output
+    assert ["crontab", "-"] not in [c[0] for c in run.calls]
+    assert not linux.CronScheduler().uninstall("reports").ok
+    assert ["crontab", "-"] not in [c[0] for c in run.calls]
+
+
+def test_cron_stderr_not_written_back(monkeypatch):
+    run = FakeRun(stdout="30 2 * * * backup.sh\n", stderr="warning: something")
+    monkeypatch.setattr(base, "default_run", run)
+    assert linux.CronScheduler().install(spec_for(command=["/usr/local/bin/eivlhole"])).ok
+    assert "warning:" not in run.stdin[-1] and "backup.sh" in run.stdin[-1]
+
+
+def test_cron_line_escapes_percent():
+    line = linux.CronScheduler().render(
+        spec_for(command=["/opt/100%tools/eivlhole"], config_dir="/c")
+    )
+    assert "100\\%tools" in line
+    assert line.replace("\\%", "").count("%") == 0

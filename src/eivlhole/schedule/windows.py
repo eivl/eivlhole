@@ -54,6 +54,11 @@ _TEMPLATE = """<?xml version="1.0" encoding="UTF-16"?>
 """
 
 
+def _run(args: list[str]) -> tuple[int | None, str]:
+    code, stdout, stderr = run_tool(args)
+    return code, (stdout + stderr).strip()
+
+
 def task_name(job: str) -> str:
     return f"eivlhole\\{job}"
 
@@ -85,24 +90,27 @@ class TaskScheduler:
         return (
             f"Register by hand (as a user allowed to create tasks):\n"
             f'  schtasks /Create /TN {task_name(spec.job)} /XML "{xml_path(spec.job)}" /F\n'
-            f"or import that XML file in Task Scheduler: Action > Import Task."
+            f"or import that XML file in Task Scheduler: Action > Import Task.\n"
+            "The task runs as S4U (no stored password): the tool's file-based SSH key works; "
+            "keys kept in a credential manager, on a redirected network profile, or proxies "
+            "needing Kerberos do not."
         )
 
     def install(self, spec: ScheduleSpec) -> ActionResult:
         path = xml_path(spec.job)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(self.render(spec).encode("utf-16"))  # BOM + UTF-16 LE
-        code, out = run_tool(
+        code, out = _run(
             ["schtasks", "/Create", "/TN", task_name(spec.job), "/XML", str(path), "/F"]
         )
         return ActionResult(ok=code == 0, output=out, manual=self.manual(spec))
 
     def uninstall(self, job: str) -> ActionResult:
-        code, out = run_tool(["schtasks", "/Delete", "/TN", task_name(job), "/F"])
+        code, out = _run(["schtasks", "/Delete", "/TN", task_name(job), "/F"])
         return ActionResult(
             ok=code == 0, output=out, manual=f"  schtasks /Delete /TN {task_name(job)} /F"
         )
 
     def status(self, job: str) -> str | None:
-        code, out = run_tool(["schtasks", "/Query", "/TN", task_name(job), "/FO", "LIST", "/V"])
+        code, out = _run(["schtasks", "/Query", "/TN", task_name(job), "/FO", "LIST", "/V"])
         return out if code == 0 else None
