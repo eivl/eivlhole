@@ -8,7 +8,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from eivlhole.errors import EivlholeError
+from eivlhole.errors import EivlholeError, MailboxError
+from eivlhole.mailbox.base import validate_relpath
 
 CODES = "codes"
 TRANSFERS = "transfers"
@@ -24,6 +25,17 @@ class InitResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def _validate_incoming(rel: str) -> list[str]:
+    try:
+        validate_relpath(rel)
+    except MailboxError as exc:
+        raise EivlholeError(f"invalid --incoming directory {rel!r}: {exc}") from exc
+    parts = rel.split("/")
+    if parts[0] in (CODES, TRANSFERS, HOME):
+        raise EivlholeError(f"--incoming {rel!r} would overlap the reserved directory {parts[0]!r}")
+    return parts
+
+
 def init_layout(
     root: Path,
     *,
@@ -31,6 +43,7 @@ def init_layout(
     dry_run: bool = False,
     incoming: Sequence[str] = (),
 ) -> InitResult:
+    incoming_parts = [_validate_incoming(rel) for rel in incoming]
     result = InitResult()
     is_root = os.name == "posix" and os.geteuid() == 0
     for name, mode in _MODES.items():
@@ -51,10 +64,7 @@ def init_layout(
                         result.warnings.append(f"could not chown {path} to {user}: {exc}")
                 else:
                     shutil.chown(path, user="root")
-    for rel in incoming:
-        parts = rel.replace("\\", "/").strip("/").split("/")
-        if rel.startswith(("/", "\\")) or any(part in ("", ".", "..") for part in parts):
-            raise EivlholeError(f"invalid --incoming directory {rel!r}: must be a relative path")
+    for parts in incoming_parts:
         path = root.joinpath(*parts)
         if not path.exists():
             result.created.append(path)

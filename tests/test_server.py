@@ -267,3 +267,19 @@ def test_cli_server_init_incoming(tmp_path, config_dir):
     assert r.exit_code == 0, r.output
     assert (root / "incoming" / "reports").is_dir()
     assert 'remote_dir = "/incoming/reports"' in r.output
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["../escape", "/abs", "C:foo", "C:/x", "a\\b", "aux", "codes", "transfers/x", "home/.ssh"],
+)
+def test_init_layout_incoming_rejects(tmp_path, bad):
+    with pytest.raises(EivlholeError, match="incoming"):
+        layout.init_layout(tmp_path / "srv", incoming=[bad])
+
+
+def test_init_layout_incoming_validates_before_creating(tmp_path):
+    root = tmp_path / "srv"
+    with pytest.raises(EivlholeError, match="incoming"):
+        layout.init_layout(root, incoming=["ok", "../bad"])
+    assert not root.exists()
