@@ -44,8 +44,13 @@ def ssh_server(tmp_path: Path):
     root.mkdir()
     host_key = asyncssh.generate_private_key("ssh-ed25519")
     server = FakeServer(
-        host="127.0.0.1", port=0, root=root, user="eivlhole", password="pw",
-        host_key=host_key, known_hosts=tmp_path / "server_known_hosts",
+        host="127.0.0.1",
+        port=0,
+        root=root,
+        user="eivlhole",
+        password="pw",
+        host_key=host_key,
+        known_hosts=tmp_path / "server_known_hosts",
     )
 
     class Server(asyncssh.SSHServer):
@@ -74,8 +79,12 @@ def ssh_server(tmp_path: Path):
 
     async def serve() -> None:
         listener = await asyncssh.listen(
-            server.host, 0, server_host_keys=[host_key], server_factory=Server,
-            sftp_factory=SFTP, allow_scp=False,
+            server.host,
+            0,
+            server_host_keys=[host_key],
+            server_factory=Server,
+            sftp_factory=SFTP,
+            allow_scp=False,
         )
         holder["listener"] = listener
         server.port = listener.sockets[0].getsockname()[1]
@@ -121,7 +130,9 @@ def client_key(tmp_path: Path, ssh_server: FakeServer) -> Path:
 @pytest.fixture
 def target(ssh_server: FakeServer, client_key: Path) -> SSHTarget:
     return SSHTarget(
-        hostname=ssh_server.host, port=ssh_server.port, user=ssh_server.user,
+        hostname=ssh_server.host,
+        port=ssh_server.port,
+        user=ssh_server.user,
         key_path=client_key,
     )
 

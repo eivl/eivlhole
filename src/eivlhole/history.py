@@ -148,8 +148,18 @@ class History:
         cur = self._conn.execute(
             "INSERT INTO files (run_id, ts, direction, filename, local_path, remote_path,"
             " size, sha256, status, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (run_id, utcnow(), direction, filename, local_path, remote_path, size, sha256,
-             status, error),
+            (
+                run_id,
+                utcnow(),
+                direction,
+                filename,
+                local_path,
+                remote_path,
+                size,
+                sha256,
+                status,
+                error,
+            ),
         )
         self._conn.commit()
         return int(cur.lastrowid)
@@ -246,7 +256,5 @@ class History:
         return RunRecord(**dict(row)) if row else None
 
     def files_for_run(self, run_id: int) -> list[FileRecord]:
-        rows = self._conn.execute(
-            "SELECT * FROM files WHERE run_id = ? ORDER BY id", (run_id,)
-        )
+        rows = self._conn.execute("SELECT * FROM files WHERE run_id = ? ORDER BY id", (run_id,))
         return [FileRecord(**dict(row)) for row in rows]

@@ -58,9 +58,13 @@ def list_(ctx: typer.Context) -> None:
         target = target_from_host(host)
         trusted = "yes" if find_pinned(target, state.known_hosts()) else "no"
         table.add_row(
-            escape(host.name), escape(host.hostname), str(host.port), escape(host.user),
+            escape(host.name),
+            escape(host.hostname),
+            str(host.port),
+            escape(host.user),
             escape(host.key or "(tool key)"),
-            trusted, "*" if cfg.defaults.host == host.name else "",
+            trusted,
+            "*" if cfg.defaults.host == host.name else "",
         )
     console.print(table)
 
@@ -78,9 +82,7 @@ def trust(
     host = state.config.host_for(name)
     target = target_from_host(host)
     key = run_async(fetch_host_key(target))
-    console.print(
-        f"{escape(target.label)} host key fingerprint: [bold]{fingerprint(key)}[/]"
-    )
+    console.print(f"{escape(target.label)} host key fingerprint: [bold]{fingerprint(key)}[/]")
     if not yes and not state.confirm("Trust this host?", default=False):
         raise EivlholeError("host not trusted")
     if pin_host_key(target, key, state.known_hosts(), replace=replace):

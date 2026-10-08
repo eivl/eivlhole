@@ -36,7 +36,10 @@ TrustPrompt = Callable[[SSHTarget, str], bool]
 def target_from_host(host: HostConfig) -> SSHTarget:
     key = Path(host.key).expanduser() if host.key else paths.private_key_file()
     return SSHTarget(
-        hostname=host.hostname, port=host.port, user=host.user, key_path=key,
+        hostname=host.hostname,
+        port=host.port,
+        user=host.user,
+        key_path=key,
         use_agent=host.use_agent,
     )
 
@@ -108,9 +111,7 @@ def _auth_kwargs(target: SSHTarget, password: str | None) -> dict:
     if target.key_path is not None and target.key_path.exists():
         kwargs["client_keys"] = [str(target.key_path)]
     elif not target.use_agent:
-        raise AuthError(
-            f"no private key at {target.key_path}; run `eivlhole keys init` first"
-        )
+        raise AuthError(f"no private key at {target.key_path}; run `eivlhole keys init` first")
     else:
         kwargs["client_keys"] = []
     return kwargs
@@ -133,8 +134,12 @@ async def connect(
         try:
             # config=[]: the tool's own config is the only source of host settings.
             conn = await asyncssh.connect(
-                target.hostname, target.port, username=target.user, known_hosts=str(kh),
-                config=[], **auth,
+                target.hostname,
+                target.port,
+                username=target.user,
+                known_hosts=str(kh),
+                config=[],
+                **auth,
             )
             break
         except asyncssh.HostKeyNotVerifiable as exc:

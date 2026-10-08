@@ -41,10 +41,16 @@ def test_sshd_snippet(tmp_path):
     assert 'drop_root = "/"' in text
 
 
-@pytest.mark.parametrize("text, expected", [
-    ("7d", timedelta(days=7)), ("12h", timedelta(hours=12)), ("30m", timedelta(minutes=30)),
-    ("90s", timedelta(seconds=90)), ("2D", timedelta(days=2)),
-])
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("7d", timedelta(days=7)),
+        ("12h", timedelta(hours=12)),
+        ("30m", timedelta(minutes=30)),
+        ("90s", timedelta(seconds=90)),
+        ("2D", timedelta(days=2)),
+    ],
+)
 def test_parse_duration(text, expected):
     assert sweep.parse_duration(text) == expected
 
@@ -179,9 +185,7 @@ def test_sweep_symlink_in_transfers_is_unlinked_not_followed(tmp_path):
     assert tid in result.removed_transfers
 
 
-@pytest.mark.skipif(
-    os.name != "posix" or os.geteuid() == 0, reason="needs non-root posix"
-)
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs non-root posix")
 def test_sweep_reports_rmtree_failure(tmp_path):
     root = tmp_path / "srv"
     layout.init_layout(root)

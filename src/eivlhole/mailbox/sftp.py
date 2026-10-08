@@ -136,9 +136,7 @@ class SftpMailbox:
 
     async def claim(self, code: str, transfer_id: str) -> None:
         try:
-            await self.sftp.rename(
-                self._code_path(code), self.remote_path(transfer_id, CLAIMED)
-            )
+            await self.sftp.rename(self._code_path(code), self.remote_path(transfer_id, CLAIMED))
         except (asyncssh.SFTPNoSuchFile, asyncssh.SFTPFailure) as exc:
             raise CodeNotFound(f"code {code} was claimed by someone else or expired") from exc
         except asyncssh.SFTPError as exc:
@@ -169,8 +167,10 @@ class SftpMailbox:
 
         try:
             await self.sftp.get(
-                self.remote_path(transfer_id, relpath), str(local),
-                progress_handler=handler, block_size=BLOCK_SIZE,
+                self.remote_path(transfer_id, relpath),
+                str(local),
+                progress_handler=handler,
+                block_size=BLOCK_SIZE,
             )
         except asyncssh.SFTPError as exc:
             local.unlink(missing_ok=True)

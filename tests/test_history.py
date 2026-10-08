@@ -21,10 +21,26 @@ def test_run_lifecycle(tmp_path):
 def test_add_and_query_files_by_name_and_glob(tmp_path):
     h = make(tmp_path)
     rid = h.start_run("job", job="weekly")
-    h.add_file(rid, direction="out", filename="daily-20261007.csv", local_path="/l/a",
-               remote_path="/r/a", size=10, sha256="aa", status="sent")
-    h.add_file(rid, direction="out", filename="summary.xlsx", local_path="/l/b",
-               remote_path="/r/b", size=20, sha256="bb", status="sent")
+    h.add_file(
+        rid,
+        direction="out",
+        filename="daily-20261007.csv",
+        local_path="/l/a",
+        remote_path="/r/a",
+        size=10,
+        sha256="aa",
+        status="sent",
+    )
+    h.add_file(
+        rid,
+        direction="out",
+        filename="summary.xlsx",
+        local_path="/l/b",
+        remote_path="/r/b",
+        size=20,
+        sha256="bb",
+        status="sent",
+    )
     h.finish_run(rid, "ok")
     assert [f.filename for f in h.files(["summary.xlsx"])] == ["summary.xlsx"]
     assert [f.filename for f in h.files(["daily-*.csv"])] == ["daily-20261007.csv"]
@@ -36,12 +52,27 @@ def test_add_and_query_files_by_name_and_glob(tmp_path):
 def test_files_filters(tmp_path):
     h = make(tmp_path)
     r1 = h.start_run("job", job="a", host="h1")
-    h.add_file(r1, direction="out", filename="x",
-        local_path="", remote_path="", size=1, sha256="", status="sent",
+    h.add_file(
+        r1,
+        direction="out",
+        filename="x",
+        local_path="",
+        remote_path="",
+        size=1,
+        sha256="",
+        status="sent",
     )
     r2 = h.start_run("receive", host="h2")
-    h.add_file(r2, direction="in", filename="x",
-        local_path="", remote_path="", size=1, sha256="", status="failed", error="boom",
+    h.add_file(
+        r2,
+        direction="in",
+        filename="x",
+        local_path="",
+        remote_path="",
+        size=1,
+        sha256="",
+        status="failed",
+        error="boom",
     )
     assert len(h.files(["x"])) == 2
     assert len(h.files(["x"], job="a")) == 1
@@ -53,8 +84,15 @@ def test_files_filters(tmp_path):
 def test_files_by_date(tmp_path):
     h = make(tmp_path)
     rid = h.start_run("job", job="a")
-    fid = h.add_file(rid, direction="out", filename="x",
-        local_path="", remote_path="", size=1, sha256="", status="sent",
+    fid = h.add_file(
+        rid,
+        direction="out",
+        filename="x",
+        local_path="",
+        remote_path="",
+        size=1,
+        sha256="",
+        status="sent",
     )
     yesterday = datetime.now(UTC) - timedelta(days=1)
     h._conn.execute("UPDATE files SET ts=? WHERE id=?", (yesterday.isoformat(), fid))
@@ -71,8 +109,15 @@ def test_runs_listing_and_files_for_run(tmp_path):
     r1 = h.start_run("job", job="a")
     h.finish_run(r1, "ok")
     r2 = h.start_run("job", job="b")
-    h.add_file(r2, direction="out", filename="f",
-        local_path="", remote_path="", size=1, sha256="", status="sent",
+    h.add_file(
+        r2,
+        direction="out",
+        filename="f",
+        local_path="",
+        remote_path="",
+        size=1,
+        sha256="",
+        status="sent",
     )
     h.finish_run(r2, "failed", exit_code=1, error="x")
     runs = h.runs()

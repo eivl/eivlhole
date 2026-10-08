@@ -69,9 +69,7 @@ def _print_manifest(manifest: Manifest) -> None:
 @handle_errors
 def send(
     ctx: typer.Context,
-    paths_: Annotated[
-        list[Path], typer.Argument(metavar="PATH...", help="Files or directories.")
-    ],
+    paths_: Annotated[list[Path], typer.Argument(metavar="PATH...", help="Files or directories.")],
     to: str | None = typer.Option(None, "--to", help="Drop host name; default host if omitted."),
     code_length: int | None = typer.Option(None, "--code-length", min=1, max=8),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait until the receiver is done."),
@@ -123,8 +121,7 @@ def send(
             )
         else:
             console.print(
-                "Interrupted before the transfer was published; "
-                "nothing was left on the drop host."
+                "Interrupted before the transfer was published; nothing was left on the drop host."
             )
         raise typer.Exit(130) from exc
 
@@ -133,9 +130,7 @@ def send(
 def receive(
     ctx: typer.Context,
     code: str | None = typer.Argument(None, help="Code from the sender; prompted if omitted."),
-    out: Annotated[
-        Path | None, typer.Option("--out", "-o", help="Destination directory.")
-    ] = None,
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Destination directory.")] = None,
     yes: bool = typer.Option(False, "--yes", "-y", help="Accept without confirmation."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace existing local files."),
     from_host: str | None = typer.Option(

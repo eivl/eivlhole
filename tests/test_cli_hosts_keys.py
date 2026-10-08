@@ -11,8 +11,21 @@ runner = CliRunner()
 
 
 def add_host(ssh_server, extra=()):
-    return runner.invoke(app, ["hosts", "add", "drop", "--hostname", ssh_server.host, "--user",
-                               ssh_server.user, "--port", str(ssh_server.port), *extra])
+    return runner.invoke(
+        app,
+        [
+            "hosts",
+            "add",
+            "drop",
+            "--hostname",
+            ssh_server.host,
+            "--user",
+            ssh_server.user,
+            "--port",
+            str(ssh_server.port),
+            *extra,
+        ],
+    )
 
 
 def test_hosts_add_list_remove(config_dir, ssh_server):

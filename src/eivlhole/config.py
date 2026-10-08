@@ -96,7 +96,9 @@ class _Problems:
             raise ConfigError(self.items)
 
 
-def _str(data: dict, key: str, path: str, p: _Problems, *, required: bool, default: str = "") -> str:  # noqa: E501
+def _str(
+    data: dict, key: str, path: str, p: _Problems, *, required: bool, default: str = ""
+) -> str:  # noqa: E501
     if key not in data:
         if required:
             p.add(f"{path}.{key}", "required")
@@ -176,8 +178,14 @@ def _parse_job(name: str, data: Any, hosts: dict[str, HostConfig], p: _Problems)
     _check_keys(
         data,
         (
-            "remote_dir", "host", "files", "patterns", "schedule",
-            "holidays", "on_success", "retries",
+            "remote_dir",
+            "host",
+            "files",
+            "patterns",
+            "schedule",
+            "holidays",
+            "on_success",
+            "retries",
         ),
         path,
         p,
@@ -277,7 +285,9 @@ def parse_config(data: dict) -> Config:
         if host is not None and not isinstance(host, str):
             p.add("defaults.host", "must be a string")
         defaults.host = host if isinstance(host, str) else None
-        defaults.drop_root = _str(draw, "drop_root", "defaults", p, required=False, default="/srv/eivlhole")  # noqa: E501
+        defaults.drop_root = _str(
+            draw, "drop_root", "defaults", p, required=False, default="/srv/eivlhole"
+        )  # noqa: E501
         defaults.code_words = _int(draw, "code_words", "defaults", p, 3)
         if not 1 <= defaults.code_words <= 8:
             p.add("defaults.code_words", "must be between 1 and 8")

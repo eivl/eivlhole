@@ -102,11 +102,19 @@ async def send(
             size = local.stat().st_size
             await mailbox.put_file(transfer_id, rel, local, progress)
             entries.append(ManifestEntry(path=rel, size=size, sha256=digest))
-            _safe(history, lambda h, local=local, rel=rel, size=size, digest=digest: h.add_file(
-                run_id, direction="out", filename=local.name, local_path=str(local),
-                remote_path=mailbox.remote_path(transfer_id, rel), size=size, sha256=digest,
-                status="sent",
-            ))
+            _safe(
+                history,
+                lambda h, local=local, rel=rel, size=size, digest=digest: h.add_file(
+                    run_id,
+                    direction="out",
+                    filename=local.name,
+                    local_path=str(local),
+                    remote_path=mailbox.remote_path(transfer_id, rel),
+                    size=size,
+                    sha256=digest,
+                    status="sent",
+                ),
+            )
         manifest = Manifest(
             created=utcnow(), sender=f"{getpass.getuser()}@{socket.gethostname()}", files=entries
         )
@@ -120,9 +128,7 @@ async def send(
         raise
     finally:
         if run_id is not None:
-            _safe(history, lambda h: h.finish_run(
-                run_id, status, exit_code=exit_code, error=error
-            ))
+            _safe(history, lambda h: h.finish_run(run_id, status, exit_code=exit_code, error=error))
     log.info("sent %d file(s) as transfer %s code %s", len(entries), transfer_id, code)
     return SendResult(transfer_id=transfer_id, code=code, files=entries, run_id=run_id)
 
@@ -207,18 +213,35 @@ async def receive(
             except Exception as exc:  # noqa: BLE001 - record and continue with other files
                 part.unlink(missing_ok=True)
                 failures.append(f"{entry.path}: {exc}")
-                _safe(history, lambda h, entry=entry, local=local, remote=remote,
-                      exc=exc: h.add_file(
-                    run_id, direction="in", filename=Path(entry.path).name,
-                    local_path=str(local), remote_path=remote, size=entry.size,
-                    sha256=entry.sha256, status="failed", error=str(exc),
-                ))
+                _safe(
+                    history,
+                    lambda h, entry=entry, local=local, remote=remote, exc=exc: h.add_file(
+                        run_id,
+                        direction="in",
+                        filename=Path(entry.path).name,
+                        local_path=str(local),
+                        remote_path=remote,
+                        size=entry.size,
+                        sha256=entry.sha256,
+                        status="failed",
+                        error=str(exc),
+                    ),
+                )
                 continue
             received.append(local)
-            _safe(history, lambda h, entry=entry, local=local, remote=remote: h.add_file(
-                run_id, direction="in", filename=Path(entry.path).name, local_path=str(local),
-                remote_path=remote, size=entry.size, sha256=entry.sha256, status="received",
-            ))
+            _safe(
+                history,
+                lambda h, entry=entry, local=local, remote=remote: h.add_file(
+                    run_id,
+                    direction="in",
+                    filename=Path(entry.path).name,
+                    local_path=str(local),
+                    remote_path=remote,
+                    size=entry.size,
+                    sha256=entry.sha256,
+                    status="received",
+                ),
+            )
         if failures:
             error = "; ".join(failures)
             exit_code = 3 if received else 1
@@ -232,8 +255,6 @@ async def receive(
         raise
     finally:
         if run_id is not None:
-            _safe(history, lambda h: h.finish_run(
-                run_id, status, exit_code=exit_code, error=error
-            ))
+            _safe(history, lambda h: h.finish_run(run_id, status, exit_code=exit_code, error=error))
     log.info("received %d file(s) from transfer %s", len(received), transfer_id)
     return ReceiveResult(transfer_id=transfer_id, files=received, run_id=run_id)

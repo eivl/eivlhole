@@ -55,9 +55,15 @@ def enrol(
         raise EivlholeError("enrol needs a password; use --password-stdin in unattended mode")
     else:
         password = typer.prompt(f"Password for {target.label}", hide_input=True)
-    added = run_async(keys.enrol(
-        target, password, line, known_hosts=state.known_hosts(), prompt_trust=state.trust_prompt()
-    ))
+    added = run_async(
+        keys.enrol(
+            target,
+            password,
+            line,
+            known_hosts=state.known_hosts(),
+            prompt_trust=state.trust_prompt(),
+        )
+    )
     if added:
         console.print(f"enrolled public key on {target.label}", markup=False)
     else:
@@ -74,7 +80,9 @@ def test(
     state = get_state(ctx)
     host = state.config.host_for(name)
     target = target_from_host(host)
-    cwd = run_async(keys.test_connection(
-        target, known_hosts=state.known_hosts(), prompt_trust=state.trust_prompt()
-    ))
+    cwd = run_async(
+        keys.test_connection(
+            target, known_hosts=state.known_hosts(), prompt_trust=state.trust_prompt()
+        )
+    )
     console.print(f"OK: {target.label} (sftp cwd {cwd})", markup=False)

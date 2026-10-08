@@ -36,7 +36,7 @@ def test_collect_files_relpath_uses_forward_slash(tmp_path):
     d = tmp_path / "pkg"
     (d / "deep" / "er").mkdir(parents=True)
     (d / "deep" / "er" / "f").write_bytes(b"1")
-    (_, rel), = transfer.collect_files([d])
+    ((_, rel),) = transfer.collect_files([d])
     assert rel == "pkg/deep/er/f" and "\\" not in rel
 
 
@@ -77,7 +77,11 @@ async def test_send_then_receive_end_to_end(target, ssh_server, drop, tmp_path):
     async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
         mb = SftpMailbox(s, "/drop")
         result = await transfer.send(
-            [src / "pkg", src / "solo.txt"], mb, history=hist, host_name="drop", words=3,
+            [src / "pkg", src / "solo.txt"],
+            mb,
+            history=hist,
+            host_name="drop",
+            words=3,
             progress=lambda n, d, t: prog.append(n),
         )
     assert len(result.files) == 3 and result.code.count("-") == 3
@@ -95,8 +99,12 @@ async def test_send_then_receive_end_to_end(target, ssh_server, drop, tmp_path):
     async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
         mb = SftpMailbox(s, "/drop")
         r = await transfer.receive(
-            result.code.upper().replace("-", " "), mb, out, history=hist,
-            host_name="drop", confirm=lambda m: seen_manifest.append(m) or True,
+            result.code.upper().replace("-", " "),
+            mb,
+            out,
+            history=hist,
+            host_name="drop",
+            confirm=lambda m: seen_manifest.append(m) or True,
         )
     assert seen_manifest[0].total_size == 200000 + 3 + 4
     assert (out / "pkg" / "one.bin").read_bytes() == b"1" * 200000
@@ -120,7 +128,11 @@ async def test_receive_declined_leaves_transfer(target, ssh_server, drop, tmp_pa
         res = await transfer.send([f], mb, history=None, host_name="drop")
         with pytest.raises(TransferError, match="cancelled"):
             await transfer.receive(
-                res.code, mb, tmp_path / "out", history=None, host_name="drop",
+                res.code,
+                mb,
+                tmp_path / "out",
+                history=None,
+                host_name="drop",
                 confirm=lambda m: False,
             )
         assert (drop / "codes" / res.code).exists()
@@ -214,18 +226,26 @@ async def test_two_receivers_one_code(target, ssh_server, drop, tmp_path):
     f = tmp_path / "f.txt"
     f.write_text("x")
     kh = ssh_server.known_hosts
-    async with sftp(target, known_hosts=kh) as s0, \
-            sftp(target, known_hosts=kh) as s1, \
-            sftp(target, known_hosts=kh) as s2:
+    async with (
+        sftp(target, known_hosts=kh) as s0,
+        sftp(target, known_hosts=kh) as s1,
+        sftp(target, known_hosts=kh) as s2,
+    ):
         res = await transfer.send([f], SftpMailbox(s0, "/drop"), history=None, host_name="drop")
         results = await asyncio.gather(
             transfer.receive(
-                res.code, SftpMailbox(s1, "/drop"), tmp_path / "o1",
-                history=None, host_name="drop",
+                res.code,
+                SftpMailbox(s1, "/drop"),
+                tmp_path / "o1",
+                history=None,
+                host_name="drop",
             ),
             transfer.receive(
-                res.code, SftpMailbox(s2, "/drop"), tmp_path / "o2",
-                history=None, host_name="drop",
+                res.code,
+                SftpMailbox(s2, "/drop"),
+                tmp_path / "o2",
+                history=None,
+                host_name="drop",
             ),
             return_exceptions=True,
         )
@@ -273,9 +293,7 @@ async def test_wait_for_receipt_failure_marker(target, ssh_server, drop, tmp_pat
             await transfer.wait_for_receipt(a, res.transfer_id, poll=0.05)
 
 
-async def test_wait_for_receipt_vanished_counts_as_received(
-    target, ssh_server, drop, tmp_path
-):
+async def test_wait_for_receipt_vanished_counts_as_received(target, ssh_server, drop, tmp_path):
     f = tmp_path / "f.txt"
     f.write_text("x")
     states = []
@@ -284,9 +302,7 @@ async def test_wait_for_receipt_vanished_counts_as_received(
         a, b = SftpMailbox(s1, "/drop"), SftpMailbox(s2, "/drop")
         res = await transfer.send([f], a, history=None, host_name="drop")
         await b.remove(res.transfer_id)
-        await transfer.wait_for_receipt(
-            a, res.transfer_id, poll=0.05, on_state=states.append
-        )
+        await transfer.wait_for_receipt(a, res.transfer_id, poll=0.05, on_state=states.append)
     assert states[-1] == "received"
 
 
@@ -297,10 +313,16 @@ async def test_receive_rejects_traversal_manifest(target, ssh_server, drop, tmp_
         mb = SftpMailbox(s, "/drop")
         res = await transfer.send([f], mb, history=None, host_name="drop")
         manifest = drop / "transfers" / res.transfer_id / "manifest.json"
-        manifest.write_text(json.dumps({
-            "created": "c", "sender": "s", "version": 1,
-            "files": [{"path": "../escape.txt", "size": 1, "sha256": "0" * 64}],
-        }))
+        manifest.write_text(
+            json.dumps(
+                {
+                    "created": "c",
+                    "sender": "s",
+                    "version": 1,
+                    "files": [{"path": "../escape.txt", "size": 1, "sha256": "0" * 64}],
+                }
+            )
+        )
         out = tmp_path / "out"
         with pytest.raises(MailboxError):
             await transfer.receive(res.code, mb, out, history=None, host_name="drop")
@@ -308,9 +330,7 @@ async def test_receive_rejects_traversal_manifest(target, ssh_server, drop, tmp_
         assert await mb.resolve(res.code) == res.transfer_id
 
 
-async def test_receive_overwrite_keeps_original_on_mismatch(
-    target, ssh_server, drop, tmp_path
-):
+async def test_receive_overwrite_keeps_original_on_mismatch(target, ssh_server, drop, tmp_path):
     f = tmp_path / "f.txt"
     f.write_text("new")
     out = tmp_path / "out"
@@ -328,9 +348,7 @@ async def test_receive_overwrite_keeps_original_on_mismatch(
     assert not (out / "f.txt.part").exists()
 
 
-async def test_send_cleans_up_when_publish_fails(
-    target, ssh_server, drop, tmp_path, monkeypatch
-):
+async def test_send_cleans_up_when_publish_fails(target, ssh_server, drop, tmp_path, monkeypatch):
     f = tmp_path / "f.txt"
     f.write_text("x")
     hist = History(tmp_path / "h.sqlite")

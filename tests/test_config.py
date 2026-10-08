@@ -21,7 +21,9 @@ FULL = {
             "host": "drop",
             "remote_dir": "/incoming/reports",
             "files": ["C:/reports/summary.xlsx"],
-            "patterns": [{"dir": "C:/reports/daily", "regex": r"^daily-\d{8}\.csv$", "recursive": False}],  # noqa: E501
+            "patterns": [
+                {"dir": "C:/reports/daily", "regex": r"^daily-\d{8}\.csv$", "recursive": False}
+            ],  # noqa: E501
             "schedule": {"time": "07:00", "days": ["tue", "thu"]},
             "holidays": {"country": "NO", "extra": ["2026-12-24", "2026-07-06..2026-07-24"]},
             "on_success": "keep",
@@ -80,15 +82,42 @@ def test_job_without_host_and_no_default_falls_back_to_defaults():
     [
         (lambda d: d["hosts"]["drop"].pop("hostname"), "hosts.drop.hostname: required"),
         (lambda d: d["hosts"]["drop"].update(port="x"), "hosts.drop.port: must be an integer"),
-        (lambda d: d["jobs"]["weekly-reports"].pop("remote_dir"), "jobs.weekly-reports.remote_dir: required"),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"].update(host="ghost"), "jobs.weekly-reports.host: unknown host 'ghost'"),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"]["schedule"].update(days=["thuesday"]), 'jobs.weekly-reports.schedule.days: unknown day "thuesday"'),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"]["schedule"].update(time="7am"), "jobs.weekly-reports.schedule.time: must be HH:MM"),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"].update(on_success="burn"), "jobs.weekly-reports.on_success: must be one of keep, move, delete"),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"]["patterns"][0].update(regex="(["), "jobs.weekly-reports.patterns[0].regex: invalid regex"),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"]["holidays"].update(extra=["xmas"]), "jobs.weekly-reports.holidays.extra[0]: must be YYYY-MM-DD or YYYY-MM-DD..YYYY-MM-DD"),  # noqa: E501
-        (lambda d: d["jobs"]["weekly-reports"].update(retries=-1), "jobs.weekly-reports.retries: must be >= 0"),  # noqa: E501
-        (lambda d: d["defaults"].update(code_words=0), "defaults.code_words: must be between 1 and 8"),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"].pop("remote_dir"),
+            "jobs.weekly-reports.remote_dir: required",
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"].update(host="ghost"),
+            "jobs.weekly-reports.host: unknown host 'ghost'",
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"]["schedule"].update(days=["thuesday"]),
+            'jobs.weekly-reports.schedule.days: unknown day "thuesday"',
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"]["schedule"].update(time="7am"),
+            "jobs.weekly-reports.schedule.time: must be HH:MM",
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"].update(on_success="burn"),
+            "jobs.weekly-reports.on_success: must be one of keep, move, delete",
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"]["patterns"][0].update(regex="(["),
+            "jobs.weekly-reports.patterns[0].regex: invalid regex",
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"]["holidays"].update(extra=["xmas"]),
+            "jobs.weekly-reports.holidays.extra[0]: must be YYYY-MM-DD or YYYY-MM-DD..YYYY-MM-DD",
+        ),  # noqa: E501
+        (
+            lambda d: d["jobs"]["weekly-reports"].update(retries=-1),
+            "jobs.weekly-reports.retries: must be >= 0",
+        ),  # noqa: E501
+        (
+            lambda d: d["defaults"].update(code_words=0),
+            "defaults.code_words: must be between 1 and 8",
+        ),  # noqa: E501
         (lambda d: d.update(bogus={}), "bogus: unknown section"),
     ],
 )
