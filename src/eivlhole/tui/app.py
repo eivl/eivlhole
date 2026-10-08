@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shlex
@@ -71,6 +72,7 @@ class EivlholeApp(App[None]):
         self.config_error: str | None = None
         self.file_records: dict[int, FileRecord] = {}
         self.poll: float = 2.0
+        self.pending_codes: dict[str, str] = {}  # code -> what it carries, until received
 
     # --- layout -------------------------------------------------------
 
@@ -93,10 +95,63 @@ class EivlholeApp(App[None]):
         self.query_one(JobsPanel).focus()
         self.show_detail("jobs", self.query_one(JobsPanel).selected_key())
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
+        # Fallback for shutdowns that bypass action_quit: Textual has already
+        # cancelled the workers; let them record their runs before closing.
+        await self._settle(self._busy_workers())
+        self._close_history()
+
+    def _close_history(self) -> None:
         if self.history is not None:
             self.history.close()
             self.history = None
+
+    # --- quit -----------------------------------------------------------
+
+    def _busy_workers(self) -> list:
+        return [w for w in self.workers if w.is_running and w.group != "quit"]
+
+    async def action_quit(self) -> None:
+        busy = self._busy_workers()
+        if not busy:
+            self._quit_worker()
+            return
+        groups = sorted({w.group for w in busy})
+        lines = [f"running: {', '.join(groups)}"]
+        if self.pending_codes:
+            lines.append("")
+            lines.append("codes not yet received (they stop being watched here):")
+            lines.extend(f"  {code}  {what}" for code, what in self.pending_codes.items())
+        self.push_screen(
+            ConfirmScreen("Operations are still running. Quit anyway?", "\n".join(lines)),
+            callback=self._confirm_quit,
+        )
+
+    def _confirm_quit(self, ok: bool | None) -> None:
+        if ok:
+            self._quit_worker()
+
+    async def _settle(self, workers: list) -> None:
+        """Wait up to 10s for cancelled workers to finish their cleanup."""
+        if not workers:
+            return
+        # Worker.wait raises WorkerCancelled for each cancelled worker; collect, not raise.
+        waits = asyncio.gather(*(w.wait() for w in workers), return_exceptions=True)
+        try:
+            await asyncio.wait_for(waits, 10)
+        except TimeoutError:
+            log.warning("workers did not stop within 10s; quitting anyway")
+
+    @work(exclusive=True, group="quit")
+    async def _quit_worker(self) -> None:
+        busy = self._busy_workers()
+        if busy:
+            self.set_status("stopping running operations...")
+            for w in busy:
+                w.cancel()
+            await self._settle(busy)
+        self._close_history()
+        self.exit()
 
     # --- data ---------------------------------------------------------
 
@@ -409,6 +464,7 @@ class EivlholeApp(App[None]):
     @work(group="send")
     async def send_worker(self, text: str) -> None:
         self._reset_progress()
+        code: str | None = None
         try:
             local_paths = split_paths(text)
             transfer.collect_files(local_paths)
@@ -427,6 +483,8 @@ class EivlholeApp(App[None]):
                 )
                 self.write_log(f"Code: {result.code}  ({len(result.files)} file(s))")
                 self.write_log(f"On the other side: eivlhole receive {result.code}")
+                self.pending_codes[result.code] = f"{len(result.files)} file(s)"
+                code = result.code
                 self.set_status(f"sent; code {result.code}; waiting for the receiver")
                 self.populate_history()
                 await transfer.wait_for_receipt(
@@ -442,6 +500,8 @@ class EivlholeApp(App[None]):
             log.exception("send failed")
             self._report_failure("send", exc)
         finally:
+            if code is not None:
+                self.pending_codes.pop(code, None)
             if self.is_running:
                 self.populate_history()
 

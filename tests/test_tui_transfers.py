@@ -246,3 +246,106 @@ async def test_failed_job_refreshes_history(
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert app.query_one("#history").row_count == 1
+
+
+async def wait_for_exit(app, timeout=15.0):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while app.return_code is None:
+        if loop.time() > deadline:
+            raise AssertionError("app did not exit in time")
+        await asyncio.sleep(0.05)
+
+
+async def test_quit_idle_does_not_prompt(config_dir, ssh_server, client_key, tmp_path):
+    write_full_config(ssh_server, client_key, tmp_path)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("q")
+        assert not isinstance(app.screen, ConfirmScreen)
+        await wait_for_exit(app)
+    assert app.return_code == 0
+
+
+async def test_quit_during_job_asks_and_exits(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    write_full_config(ssh_server, client_key, tmp_path)
+    cancelled = []
+
+    async def slow_run_job(name, config, **kwargs):
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(name)
+            raise
+        return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
+
+    monkeypatch.setattr(app_module, "run_job", slow_run_job)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("q")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        assert "job" in str(app.screen.query_one("#confirm-body").content)
+        await pilot.press("y")
+        await wait_for_exit(app)
+    assert app.return_code == 0
+    assert cancelled == ["reports"]
+    assert app.history is None
+
+
+async def test_quit_declined_keeps_running(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    write_full_config(ssh_server, client_key, tmp_path)
+
+    async def slow_run_job(name, config, **kwargs):
+        await asyncio.sleep(0.5)
+        return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
+
+    monkeypatch.setattr(app_module, "run_job", slow_run_job)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.press("n")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.return_code is None
+        assert "ok" in status(app)
+
+
+async def test_quit_during_real_job_finishes_run_row(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    from eivlhole.history import History
+
+    freeze_today(monkeypatch)
+    src, _ = write_full_config(ssh_server, client_key, tmp_path)
+    (src / "summary.xlsx").write_bytes(b"x" * (5 * 1024 * 1024))
+    real_upload = runner.upload_file
+    started = asyncio.Event()
+
+    async def slow_upload(*args, **kwargs):
+        started.set()
+        await asyncio.sleep(30)  # hold the real job mid-transfer until quit cancels it
+        return await real_upload(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "upload_file", slow_upload)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await asyncio.wait_for(started.wait(), 10)
+        await pilot.press("q")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.press("y")
+        await wait_for_exit(app)
+    with History(paths.history_file()) as h:
+        runs = h.runs()
+    assert len(runs) == 1 and runs[0].status not in ("running", "ok")
