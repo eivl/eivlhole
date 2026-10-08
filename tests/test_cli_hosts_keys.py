@@ -31,6 +31,7 @@ def add_host(ssh_server, extra=()):
 def test_hosts_add_list_remove(config_dir, ssh_server):
     r = add_host(ssh_server)
     assert r.exit_code == 0, r.output
+    assert "comments are not preserved" in r.output
     cfg = load_config(paths.config_file())
     assert cfg.hosts["drop"].port == ssh_server.port
     assert cfg.defaults.host == "drop"  # first host becomes default

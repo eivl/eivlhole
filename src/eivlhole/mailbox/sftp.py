@@ -74,14 +74,14 @@ class SftpMailbox:
     ) -> None:
         remote = self.remote_path(transfer_id, relpath)
         parent = posixpath.dirname(remote)
-        if parent != self._transfer_dir(transfer_id):
-            await self.sftp.makedirs(parent, exist_ok=True)
 
         def handler(_src: bytes, _dst: bytes, done: int, total: int) -> None:
             if progress is not None:
                 progress(relpath, done, total)
 
         try:
+            if parent != self._transfer_dir(transfer_id):
+                await self.sftp.makedirs(parent, exist_ok=True)
             await self.sftp.put(
                 str(local), remote + ".part", progress_handler=handler, block_size=BLOCK_SIZE
             )

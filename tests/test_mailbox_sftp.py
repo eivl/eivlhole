@@ -3,6 +3,7 @@ import json
 import re
 from pathlib import Path
 
+import asyncssh
 import pytest
 
 from eivlhole.errors import CodeNotFound, MailboxError
@@ -171,3 +172,37 @@ async def test_mark_failed_and_failure(target, ssh_server, drop):
         assert await mb.failure(tid) is None
         await mb.mark_failed(tid, "a.txt: checksum mismatch")
         assert await mb.failure(tid) == "a.txt: checksum mismatch"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"created":"c","sender":"s","files":[{"path":1,"size":1,"sha256":"x"}]}',
+        '{"created":"c","sender":"s","files":[{"path":"a","size":"1","sha256":"x"}]}',
+        '{"created":"c","sender":"s","files":[{"path":"a","size":1,"sha256":null}]}',
+        '{"created":"c","sender":"s","files":[{"path":"a","size":true,"sha256":"x"}]}',
+        '{"created":"c","sender":"s","files":["a"]}',
+        '{"created":"c","sender":"s","files":{"a":1}}',
+        "[]",
+    ],
+)
+def test_manifest_from_json_type_checks(text):
+    with pytest.raises(ValueError):
+        Manifest.from_json(text)
+
+
+async def test_put_file_makedirs_error_is_mailbox_error(
+    target, ssh_server, drop, tmp_path, monkeypatch
+):
+    local = tmp_path / "x.txt"
+    local.write_text("x")
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        tid = await mb.allocate()
+
+        async def denied(*args, **kwargs):
+            raise asyncssh.SFTPPermissionDenied("denied")
+
+        monkeypatch.setattr(s, "makedirs", denied)
+        with pytest.raises(MailboxError, match="upload of sub/x.txt failed"):
+            await mb.put_file(tid, "sub/x.txt", local)

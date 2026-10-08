@@ -15,6 +15,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+import asyncssh
 import typer
 from rich.console import Console
 from rich.markup import escape
@@ -44,6 +45,7 @@ class State:
 
     def save(self) -> None:
         save_config(self.config, paths.config_file())
+        console.print("[dim]config.toml rewritten; comments are not preserved[/]")
 
     def reload(self) -> None:
         self._config = None
@@ -133,6 +135,12 @@ def setup_logging(verbose: bool) -> None:
     logging.getLogger("asyncssh").setLevel(logging.WARNING)
 
 
+def _fail(message: str) -> typer.Exit:
+    logging.getLogger("eivlhole").error("%s", message, extra={"console": False})
+    err.print(f"[red]error:[/] {escape(message)}", soft_wrap=True)
+    return typer.Exit(1)
+
+
 def handle_errors[T](fn: Callable[..., T]) -> Callable[..., T]:
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> T:
@@ -142,6 +150,16 @@ def handle_errors[T](fn: Callable[..., T]) -> Callable[..., T]:
             logging.getLogger("eivlhole").error("%s", exc, extra={"console": False})
             err.print(f"[red]error:[/] {escape(str(exc))}", soft_wrap=True)
             raise typer.Exit(exc.exit_code) from exc
+        except asyncssh.PermissionDenied as exc:
+            raise _fail(f"permission denied: {exc.reason or exc}") from exc
+        except asyncssh.SFTPError as exc:
+            raise _fail(f"remote file error: {exc.reason or exc}") from exc
+        except (asyncssh.KeyImportError, asyncssh.KeyEncryptionError) as exc:
+            raise _fail(f"cannot load private key: {exc}") from exc
+        except asyncssh.Error as exc:
+            raise _fail(f"connection error: {exc.reason or exc}") from exc
+        except OSError as exc:
+            raise _fail(f"connection error: {exc}") from exc
         except KeyboardInterrupt as exc:
             err.print("interrupted")
             raise typer.Exit(130) from exc

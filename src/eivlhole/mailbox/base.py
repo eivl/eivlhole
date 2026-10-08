@@ -60,10 +60,26 @@ class Manifest:
     @classmethod
     def from_json(cls, text: str) -> Manifest:
         data = json.loads(text)
+        if not isinstance(data, dict):
+            raise ValueError("manifest is not an object")
+        files = data["files"]
+        if not isinstance(files, list):
+            raise ValueError("manifest files is not a list")
+        entries: list[ManifestEntry] = []
+        for f in files:
+            if not (
+                isinstance(f, dict)
+                and isinstance(f.get("path"), str)
+                and isinstance(f.get("size"), int)
+                and not isinstance(f.get("size"), bool)
+                and isinstance(f.get("sha256"), str)
+            ):
+                raise ValueError(f"malformed manifest entry: {f!r}")
+            entries.append(ManifestEntry(path=f["path"], size=f["size"], sha256=f["sha256"]))
         return cls(
             created=data["created"],
             sender=data["sender"],
-            files=[ManifestEntry(**f) for f in data["files"]],
+            files=entries,
             version=data.get("version", 1),
         )
 
