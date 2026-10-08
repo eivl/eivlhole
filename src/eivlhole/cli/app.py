@@ -9,6 +9,7 @@ import typer
 from eivlhole import __version__, paths
 from eivlhole.cli.common import State, setup_logging
 from eivlhole.cli.config_cmd import config_app
+from eivlhole.cli.history_cmd import history_app
 from eivlhole.cli.holidays_cmd import holidays_app
 from eivlhole.cli.hosts import hosts_app
 from eivlhole.cli.jobs import jobs_app
@@ -34,6 +35,7 @@ app.add_typer(jobs_app, name="jobs")
 app.add_typer(holidays_app, name="holidays")
 app.command("run")(run)
 app.add_typer(schedule_app, name="schedule")
+app.add_typer(history_app, name="history")
 
 
 def _version_callback(value: bool) -> None:
