@@ -1,0 +1,12 @@
+#body { height: 1fr; }
+#left { width: 42%; min-width: 34; }
+#main { width: 1fr; }
+#jobs, #hosts, #history { height: 1fr; border: round $primary; }
+#jobs:focus, #hosts:focus, #history:focus { border: round $accent; }
+#detail { height: 1fr; border: round $primary; padding: 0 1; overflow-y: auto; }
+#log { height: 12; border: round $primary; }
+#progress { height: 1; margin: 0 1; }
+#status { height: 1; background: $panel; padding: 0 1; }
+#help, #prompt, #confirm { width: 80; height: auto; max-height: 80%; border: thick $accent; background: $surface; padding: 1 2; }
+HelpScreen, TextPrompt, ConfirmScreen { align: center middle; }
+#confirm-body { max-height: 20; overflow-y: auto; }
