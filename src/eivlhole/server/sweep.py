@@ -39,6 +39,7 @@ def _check_root(root: Path) -> None:
 
 
 def _newest_mtime(path: Path) -> datetime:
+    """Raises OSError (FileNotFoundError if a receiver removed `path` meanwhile)."""
     times = [path.stat().st_mtime]
     for child in path.iterdir():
         try:
@@ -57,7 +58,14 @@ def sweep(
     for d in sorted((root / TRANSFERS).iterdir()):
         if not d.is_dir():
             continue
-        if now - _newest_mtime(d) <= max_age:
+        try:
+            newest = _newest_mtime(d)
+        except FileNotFoundError:
+            continue  # removed by a receiver while we looked
+        except OSError as exc:
+            result.errors.append(f"{d}: {exc}")
+            continue
+        if now - newest <= max_age:
             result.kept_transfers += 1
             continue
         if dry_run:
@@ -90,8 +98,15 @@ def sweep(
                 target = fh.read(64).decode("ascii", errors="replace").strip()
         except OSError:
             target = ""
+        try:
+            mtime = c.stat().st_mtime
+        except FileNotFoundError:
+            continue  # claimed by a receiver while we looked
+        except OSError as exc:
+            result.errors.append(f"{c}: {exc}")
+            continue
         stale = not _CODE_TARGET_RE.match(target) or not (root / TRANSFERS / target).is_dir()
-        old = now - datetime.fromtimestamp(c.stat().st_mtime, tz=UTC) > max_age
+        old = now - datetime.fromtimestamp(mtime, tz=UTC) > max_age
         if stale or old:
             if not dry_run:
                 try:
@@ -115,7 +130,11 @@ def status(root: Path) -> dict[str, int | float | None]:
     claimed = sum(1 for d in transfers if (d / "claimed").exists())
     codes = sum(1 for c in (root / CODES).iterdir() if c.is_file())
     oldest: float | None = None
-    if transfers:
-        now = datetime.now(UTC)
-        oldest = max((now - _newest_mtime(d)).total_seconds() / 3600 for d in transfers)
+    now = datetime.now(UTC)
+    for d in transfers:
+        try:
+            age = (now - _newest_mtime(d)).total_seconds() / 3600
+        except OSError:
+            continue  # vanished while we looked
+        oldest = age if oldest is None else max(oldest, age)
     return {"transfers": len(transfers), "claimed": claimed, "codes": codes, "oldest_hours": oldest}

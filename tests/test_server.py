@@ -1,6 +1,7 @@
 import os
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -205,3 +206,41 @@ def test_sweep_reports_rmtree_failure(tmp_path):
         assert result.errors
     finally:
         sub.chmod(0o700)
+
+
+def test_sweep_skips_transfer_that_vanishes_mid_scan(tmp_path, monkeypatch):
+    root = tmp_path / "srv"
+    layout.init_layout(root)
+    racing = make_transfer(root, "a" * 32, age=timedelta(days=30))
+    other = "b" * 32
+    make_transfer(root, other, age=timedelta(days=30))
+    real_iterdir = Path.iterdir
+
+    def iterdir(self):
+        if self == racing:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    result = sweep.sweep(root, timedelta(days=7))
+    assert result.errors == []
+    assert result.removed_transfers == [other]
+    assert racing.exists()
+    assert not (root / "transfers" / other).exists()
+
+
+def test_sweep_records_other_os_errors(tmp_path, monkeypatch):
+    root = tmp_path / "srv"
+    layout.init_layout(root)
+    broken = make_transfer(root, "a" * 32, age=timedelta(days=30))
+    real_iterdir = Path.iterdir
+
+    def iterdir(self):
+        if self == broken:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    result = sweep.sweep(root, timedelta(days=7))
+    assert len(result.errors) == 1 and "Permission denied" in result.errors[0]
+    assert broken.exists()
