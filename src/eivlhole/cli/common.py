@@ -6,8 +6,10 @@ import asyncio
 import functools
 import logging
 import os
+import sqlite3
 import sys
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -46,8 +48,17 @@ class State:
     def reload(self) -> None:
         self._config = None
 
-    def history(self) -> History:
-        return History(paths.history_file())
+    @contextmanager
+    def history(self) -> Iterator[History | None]:
+        """Open the history database, or yield None so a transfer never fails on it."""
+        try:
+            hist = History(paths.history_file())
+        except (sqlite3.Error, OSError) as exc:
+            logging.getLogger("eivlhole").warning("history unavailable: %s", exc)
+            yield None
+            return
+        with hist:
+            yield hist
 
     def known_hosts(self) -> Path:
         return paths.known_hosts_file()

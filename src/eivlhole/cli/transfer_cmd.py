@@ -1,6 +1,7 @@
 """eivlhole send / receive."""
 
 import asyncio
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -58,6 +59,36 @@ def transfer_progress() -> Iterator[ProgressFn]:
             progress.stop()
 
 
+async def _ask_in_daemon_thread(question: str, default: bool) -> bool:
+    """Ask on a daemon thread so Ctrl-C cancels the await instead of waiting for input.
+
+    asyncio.to_thread would make asyncio.run wait for the blocked input() on shutdown.
+    """
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[bool] = loop.create_future()
+
+    def deliver(result: bool | None, exc: BaseException | None) -> None:
+        if fut.done():
+            return
+        if exc is not None:
+            fut.set_exception(exc)
+        else:
+            fut.set_result(bool(result))
+
+    def ask() -> None:
+        try:
+            result, exc = Confirm.ask(question, default=default), None
+        except BaseException as e:  # noqa: BLE001 - handed to the awaiting coroutine
+            result, exc = None, e
+        try:
+            loop.call_soon_threadsafe(deliver, result, exc)
+        except RuntimeError:  # loop already closed: nobody is waiting
+            pass
+
+    threading.Thread(target=ask, name="eivlhole-prompt", daemon=True).start()
+    return await fut
+
+
 def _print_manifest(manifest: Manifest) -> None:
     table = Table("file", "size", title=f"from {escape(manifest.sender)}")
     for entry in manifest.files:
@@ -81,6 +112,7 @@ def send(
     host = cfg.host_for(to)
     target = target_from_host(host)
     words = code_length or cfg.defaults.code_words
+    transfer.collect_files(paths_)  # fail on a bad path before any network round trip
 
     sent: dict[str, transfer.SendResult] = {}
 
@@ -152,8 +184,8 @@ def receive(
         _print_manifest(manifest)
         if yes or state.unattended:
             return True
-        return await asyncio.to_thread(
-            Confirm.ask, f"Receive into {escape(str(out_dir.resolve()))}?", default=True
+        return await _ask_in_daemon_thread(
+            f"Receive into {escape(str(out_dir.resolve()))}?", default=True
         )
 
     async def go() -> transfer.ReceiveResult:

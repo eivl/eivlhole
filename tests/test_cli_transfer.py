@@ -1,9 +1,14 @@
 import asyncio
+import os
 import re
 import shutil
+import signal
+import subprocess
+import sys
 import threading
 import time
 
+import pytest
 from typer.testing import CliRunner
 
 from eivlhole import paths, transfer
@@ -120,3 +125,72 @@ def test_send_to_unknown_host(config_dir, ssh_server, client_key, tmp_path):
     src.write_text("a")
     r = runner.invoke(app, ["send", "--to", "nope", str(src)])
     assert r.exit_code == 1 and "unknown host 'nope'" in r.output
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGINT delivery to a subprocess")
+def test_ctrl_c_at_receive_prompt_exits_promptly(
+    config_dir, ssh_server, client_key, target, tmp_path
+):
+    setup(config_dir, ssh_server, client_key)
+    src = tmp_path / "p.txt"
+    src.write_text("p")
+    code = CODE_RE.search(runner.invoke(app, ["send", "--no-wait", str(src)]).output).group(0)
+    env = dict(os.environ, PYTHONUNBUFFERED="1", COLUMNS="200")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "eivlhole", "receive", code, "--out", str(tmp_path / "o")],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    try:
+        seen = b""
+        deadline = time.monotonic() + 15
+        os.set_blocking(proc.stdout.fileno(), False)
+        while b"Receive into" not in seen:
+            assert time.monotonic() < deadline, seen
+            assert proc.poll() is None, (seen, proc.stderr.read())
+            chunk = proc.stdout.read()
+            if chunk:
+                seen += chunk
+            else:
+                time.sleep(0.05)
+        time.sleep(0.2)
+        started = time.monotonic()
+        proc.send_signal(signal.SIGINT)
+        rc = proc.wait(timeout=5)
+        elapsed = time.monotonic() - started
+        stderr = proc.stderr.read().decode()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert rc == 130, stderr
+    assert elapsed < 5
+    assert "Traceback" not in stderr
+    assert "Fatal Python error" not in stderr
+    # the code was never claimed
+    assert (ssh_server.root / "drop" / "codes" / code).exists()
+
+
+def test_send_missing_file_fails_before_connecting(config_dir, ssh_server, client_key, tmp_path):
+    setup(config_dir, ssh_server, client_key)
+    text = paths.config_file().read_text().replace(f"port = {ssh_server.port}", "port = 1")
+    paths.config_file().write_text(text)
+    r = runner.invoke(app, ["send", "--no-wait", str(tmp_path / "missing.txt")])
+    assert r.exit_code == 1
+    assert "no such file" in r.output
+    assert "cannot connect" not in r.output
+
+
+def test_send_works_when_history_cannot_open(config_dir, ssh_server, client_key, tmp_path):
+    setup(config_dir, ssh_server, client_key)
+    paths.history_file().unlink(missing_ok=True)
+    paths.history_file().mkdir(parents=True)
+    src = tmp_path / "h.txt"
+    src.write_text("h")
+    r = runner.invoke(app, ["send", "--no-wait", str(src)])
+    assert r.exit_code == 0, r.output
+    assert CODE_RE.search(r.output)
+    log_text = (paths.log_dir() / "eivlhole.log").read_text()
+    assert "history unavailable" in log_text

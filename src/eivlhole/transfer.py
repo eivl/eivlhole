@@ -158,6 +158,15 @@ async def wait_for_receipt(
         await asyncio.sleep(poll)
 
 
+async def _mark_interrupted(mailbox: Mailbox, transfer_id: str, exc: BaseException) -> None:
+    """Best effort: tell the waiting sender; never mask the original exception."""
+    message = f"receiver interrupted: {type(exc).__name__}"
+    try:
+        await asyncio.wait_for(asyncio.shield(mailbox.mark_failed(transfer_id, message)), 5)
+    except (Exception, asyncio.CancelledError):  # noqa: BLE001
+        log.warning("could not mark transfer %s failed after interruption", transfer_id)
+
+
 async def receive(
     code: str,
     mailbox: Mailbox,
@@ -199,6 +208,8 @@ async def receive(
     await mailbox.claim(code, transfer_id)
     run_id = _safe(history, lambda h: h.start_run("receive", host=host_name))
     status, exit_code, error = "failed", 1, None
+    current_part: Path | None = None
+    marked_failed = False
     try:
         received: list[Path] = []
         failures: list[str] = []
@@ -206,6 +217,7 @@ async def receive(
             local = out_dir / entry.path
             part = local.with_name(local.name + ".part")
             remote = mailbox.remote_path(transfer_id, entry.path)
+            current_part = part
             try:
                 await mailbox.get_file(transfer_id, entry.path, part, progress)
                 digest = await asyncio.to_thread(sha256_file, part)
@@ -213,8 +225,10 @@ async def receive(
                     part.unlink(missing_ok=True)
                     raise TransferError(f"checksum mismatch for {entry.path}")
                 part.replace(local)
+                current_part = None
             except Exception as exc:  # noqa: BLE001 - record and continue with other files
                 part.unlink(missing_ok=True)
+                current_part = None
                 failures.append(f"{entry.path}: {exc}")
                 _safe(
                     history,
@@ -248,6 +262,7 @@ async def receive(
         if failures:
             error = "; ".join(failures)
             exit_code = 3 if received else 1
+            marked_failed = True
             await mailbox.mark_failed(transfer_id, error)
             raise TransferError("some files failed: " + error)
         await mailbox.remove(transfer_id)
@@ -255,6 +270,10 @@ async def receive(
     except BaseException as exc:
         if error is None:
             error = str(exc) or type(exc).__name__
+        if current_part is not None:
+            current_part.unlink(missing_ok=True)
+        if not marked_failed:
+            await _mark_interrupted(mailbox, transfer_id, exc)
         raise
     finally:
         if run_id is not None:

@@ -384,3 +384,25 @@ async def test_receive_rejects_path_resolving_outside_out_dir(target, ssh_server
             await transfer.receive(res.code, mb, out, history=None, host_name="drop")
         assert await mb.resolve(res.code) == res.transfer_id
     assert list(outside.iterdir()) == []
+
+
+async def test_receive_cancelled_marks_failed(target, ssh_server, drop, tmp_path, monkeypatch):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    out = tmp_path / "out"
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        res = await transfer.send([f], mb, history=None, host_name="drop")
+
+        async def interrupted(transfer_id, relpath, local, progress=None):
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.write_bytes(b"partial")
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(mb, "get_file", interrupted)
+        with pytest.raises(asyncio.CancelledError):
+            await transfer.receive(res.code, mb, out, history=None, host_name="drop")
+        msg = await mb.failure(res.transfer_id)
+    assert msg is not None and "interrupted" in msg
+    assert not (out / "f.txt.part").exists()
+    assert not (out / "f.txt").exists()
