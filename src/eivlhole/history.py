@@ -167,8 +167,15 @@ class History:
         where: list[str] = []
         params: list[object] = []
         if names:
-            where.append("(" + " OR ".join("f.filename GLOB ?" for _ in names) + ")")
-            params.extend(names)
+            # An exact filename wins over glob interpretation, so names with
+            # [ ] * ? match themselves; otherwise the name is a glob.
+            clause = (
+                "(f.filename = ? OR (f.filename GLOB ?"
+                " AND NOT EXISTS (SELECT 1 FROM files e WHERE e.filename = ?)))"
+            )
+            where.append("(" + " OR ".join(clause for _ in names) + ")")
+            for name in names:
+                params.extend([name, name, name])
         if on is not None:
             lo, hi = _day_bounds(on)
             where.append("f.ts >= ? AND f.ts <= ?")

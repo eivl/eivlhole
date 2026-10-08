@@ -90,3 +90,22 @@ def test_reopen_keeps_data(tmp_path):
     h2 = make(tmp_path)
     assert h2.run(rid) is not None
     h2.close()
+
+
+def test_files_exact_name_with_brackets(tmp_path):
+    h = make(tmp_path)
+    rid = h.start_run("job", job="a")
+    for name in ("report[1].csv", "report1.csv"):
+        h.add_file(
+            rid,
+            direction="out",
+            filename=name,
+            local_path="",
+            remote_path="",
+            size=1,
+            sha256="",
+            status="sent",
+        )
+    assert [f.filename for f in h.files(["report[1].csv"])] == ["report[1].csv"]
+    assert len(h.files(["report*.csv"])) == 2
+    h.close()
