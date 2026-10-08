@@ -132,6 +132,12 @@ def _str_list(data: dict, key: str, path: str, p: _Problems) -> list[str]:
     return list(value)
 
 
+def _check_keys(data: dict, allowed: tuple[str, ...], path: str, p: _Problems) -> None:
+    for key in data:
+        if key not in allowed:
+            p.add(f"{path}.{key}", "unknown key")
+
+
 def _valid_extra(entry: str) -> bool:
     parts = entry.split("..")
     if len(parts) not in (1, 2):
@@ -151,6 +157,7 @@ def _parse_host(name: str, data: Any, p: _Problems) -> HostConfig:
     if not isinstance(data, dict):
         p.add(path, "must be a table")
         return HostConfig(name=name, hostname="", user="")
+    _check_keys(data, ("hostname", "user", "port", "key", "use_agent"), path, p)
     return HostConfig(
         name=name,
         hostname=_str(data, "hostname", path, p, required=True),
@@ -166,6 +173,15 @@ def _parse_job(name: str, data: Any, hosts: dict[str, HostConfig], p: _Problems)
     if not isinstance(data, dict):
         p.add(path, "must be a table")
         return JobConfig(name=name, remote_dir="")
+    _check_keys(
+        data,
+        (
+            "remote_dir", "host", "files", "patterns", "schedule",
+            "holidays", "on_success", "retries",
+        ),
+        path,
+        p,
+    )
     host = data.get("host")
     if host is not None:
         if not isinstance(host, str):
@@ -174,11 +190,16 @@ def _parse_job(name: str, data: Any, hosts: dict[str, HostConfig], p: _Problems)
             p.add(f"{path}.host", f"unknown host '{host}'")
 
     patterns: list[PatternConfig] = []
-    for i, raw in enumerate(data.get("patterns", [])):
+    patterns_raw = data.get("patterns", [])
+    if not isinstance(patterns_raw, list):
+        p.add(f"{path}.patterns", "must be a list of tables")
+        patterns_raw = []
+    for i, raw in enumerate(patterns_raw):
         ppath = f"{path}.patterns[{i}]"
         if not isinstance(raw, dict):
             p.add(ppath, "must be a table with dir and regex")
             continue
+        _check_keys(raw, ("dir", "regex", "recursive"), ppath, p)
         regex = _str(raw, "regex", ppath, p, required=True)
         try:
             re.compile(regex)
@@ -198,6 +219,7 @@ def _parse_job(name: str, data: Any, hosts: dict[str, HostConfig], p: _Problems)
     if not isinstance(sched_raw, dict):
         p.add(spath, "must be a table")
     else:
+        _check_keys(sched_raw, ("time", "days"), spath, p)
         schedule.time = _str(sched_raw, "time", spath, p, required=False, default="07:00")
         if not _TIME_RE.match(schedule.time):
             p.add(f"{spath}.time", "must be HH:MM (24-hour)")
@@ -212,6 +234,7 @@ def _parse_job(name: str, data: Any, hosts: dict[str, HostConfig], p: _Problems)
     if not isinstance(hol_raw, dict):
         p.add(hpath, "must be a table")
     else:
+        _check_keys(hol_raw, ("country", "extra"), hpath, p)
         holidays.country = _str(hol_raw, "country", hpath, p, required=False, default="NO")
         holidays.extra = _str_list(hol_raw, "extra", hpath, p)
         for i, entry in enumerate(holidays.extra):
@@ -249,6 +272,7 @@ def parse_config(data: dict) -> Config:
     if not isinstance(draw, dict):
         p.add("defaults", "must be a table")
     else:
+        _check_keys(draw, ("host", "drop_root", "code_words", "receive_dir"), "defaults", p)
         host = draw.get("host")
         if host is not None and not isinstance(host, str):
             p.add("defaults.host", "must be a string")

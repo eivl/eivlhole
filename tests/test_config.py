@@ -118,3 +118,53 @@ def test_job_config_defaults():
     assert job.schedule.days == []
     assert job.holidays.country == "NO"
     assert job.retries == 3
+
+
+def _job_problems(mutate):
+    import copy
+
+    data = copy.deepcopy(FULL)
+    mutate(data)
+    with pytest.raises(ConfigError) as info:
+        parse_config(data)
+    return info.value.problems
+
+
+def test_patterns_not_a_list_int():
+    problems = _job_problems(lambda d: d["jobs"]["weekly-reports"].update(patterns=5))
+    assert problems == ["jobs.weekly-reports.patterns: must be a list of tables"]
+
+
+def test_patterns_not_a_list_string():
+    problems = _job_problems(lambda d: d["jobs"]["weekly-reports"].update(patterns="abc"))
+    assert problems == ["jobs.weekly-reports.patterns: must be a list of tables"]
+
+
+def test_unknown_key_in_job():
+    problems = _job_problems(lambda d: d["jobs"]["weekly-reports"].update(on_succes="delete"))
+    assert problems == ["jobs.weekly-reports.on_succes: unknown key"]
+
+
+def test_unknown_key_in_host_and_pattern():
+    def mutate(d):
+        d["hosts"]["drop"]["prot"] = 22
+        d["jobs"]["weekly-reports"]["patterns"][0]["recursve"] = True
+
+    problems = _job_problems(mutate)
+    assert "hosts.drop.prot: unknown key" in problems
+    assert "jobs.weekly-reports.patterns[0].recursve: unknown key" in problems
+    assert len(problems) == 2
+
+
+def test_unknown_key_in_defaults_schedule_holidays():
+    def mutate(d):
+        d["defaults"]["bogus"] = 1
+        d["jobs"]["weekly-reports"]["schedule"]["bogus"] = 1
+        d["jobs"]["weekly-reports"]["holidays"]["bogus"] = 1
+
+    problems = _job_problems(mutate)
+    assert sorted(problems) == [
+        "defaults.bogus: unknown key",
+        "jobs.weekly-reports.holidays.bogus: unknown key",
+        "jobs.weekly-reports.schedule.bogus: unknown key",
+    ]
