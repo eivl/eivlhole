@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from eivlhole.errors import TransferError
+from eivlhole.errors import MailboxError, TransferError
 from eivlhole.history import History, utcnow
 from eivlhole.mailbox.base import (
     Mailbox,
@@ -176,8 +176,11 @@ async def receive(
     out_dir = Path(out_dir)
     transfer_id = await mailbox.resolve(code)
     manifest = await mailbox.read_manifest(transfer_id)
+    out_root = out_dir.resolve()
     for entry in manifest.files:
         validate_relpath(entry.path)
+        if not (out_dir / entry.path).resolve().is_relative_to(out_root):
+            raise MailboxError(f"unsafe path in transfer: {entry.path!r}")
 
     conflicts = [e.path for e in manifest.files if (out_dir / e.path).exists()]
     if conflicts and not overwrite:

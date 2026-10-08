@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -364,3 +365,22 @@ async def test_send_cleans_up_when_publish_fails(target, ssh_server, drop, tmp_p
     assert list((drop / "transfers").iterdir()) == []
     assert hist.run(1).status == "failed"
     hist.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlinks")
+async def test_receive_rejects_path_resolving_outside_out_dir(target, ssh_server, drop, tmp_path):
+    src = tmp_path / "link"
+    src.mkdir()
+    (src / "x.txt").write_text("x")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "link").symlink_to(outside, target_is_directory=True)
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        res = await transfer.send([src], mb, history=None, host_name="drop")
+        with pytest.raises(MailboxError, match="unsafe path"):
+            await transfer.receive(res.code, mb, out, history=None, host_name="drop")
+        assert await mb.resolve(res.code) == res.transfer_id
+    assert list(outside.iterdir()) == []

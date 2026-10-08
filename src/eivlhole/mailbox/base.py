@@ -13,12 +13,25 @@ from eivlhole.errors import MailboxError
 ProgressFn = Callable[[str, int, int], None]
 
 
+_FORBIDDEN_CHARS = set(':<>"|?*\\')
+_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10)}
+
+
+def _unsafe_segment(seg: str) -> bool:
+    if seg in ("", ".", ".."):
+        return True
+    if seg.endswith((".", " ")):
+        return True
+    return seg.split(".", 1)[0].upper() in _RESERVED
+
+
 def validate_relpath(relpath: str) -> None:
+    """Reject paths that could escape or misbehave on any receiving platform."""
     if (
         not relpath
         or relpath.startswith("/")
-        or "\\" in relpath
-        or any(seg in ("", ".", "..") for seg in relpath.split("/"))
+        or any(ch in _FORBIDDEN_CHARS or ord(ch) < 32 for ch in relpath)
+        or any(_unsafe_segment(seg) for seg in relpath.split("/"))
     ):
         raise MailboxError(f"unsafe path in transfer: {relpath!r}")
 
