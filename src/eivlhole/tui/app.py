@@ -61,6 +61,7 @@ class EivlholeApp(App[None]):
         Binding("R", "receive", "Receive"),
         Binding("e", "edit_config", "Edit config"),
         Binding("t", "test_host", "Test host"),
+        Binding("g", "refresh", "Refresh"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -75,6 +76,7 @@ class EivlholeApp(App[None]):
         self.file_records: dict[int, FileRecord] = {}
         self.poll: float = 2.0
         self.pending_codes: dict[str, str] = {}  # code -> what it carries, until received
+        self._history_mark: tuple | None = None
 
     # --- layout -------------------------------------------------------
 
@@ -96,6 +98,7 @@ class EivlholeApp(App[None]):
         self.reload()
         self.query_one(JobsPanel).focus()
         self.show_detail("jobs", self.query_one(JobsPanel).selected_key())
+        self.set_interval(5.0, self._maybe_refresh_history)
 
     async def on_unmount(self) -> None:
         # Fallback for shutdowns that bypass action_quit: Textual has already
@@ -206,6 +209,28 @@ class EivlholeApp(App[None]):
             self.set_status(f"history unavailable: {exc}", error=True)
             panel.replace_rows([], [])
 
+    def _maybe_refresh_history(self) -> None:
+        """Repopulate History when another process (the scheduler, the CLI) changed it."""
+        try:
+            if self.history is None:
+                return
+            newest = self.history.runs(limit=1)
+            running = self.history.runs(status="running", limit=500)
+            mark = (
+                (newest[0].id, newest[0].status) if newest else None,
+                tuple(r.id for r in running),
+            )
+            if mark != self._history_mark:
+                self._history_mark = mark
+                self.populate_history()
+        except Exception:  # noqa: BLE001 - a timer must never crash the app
+            log.exception("history refresh failed")
+
+    def action_refresh(self) -> None:
+        self.reload()
+        if self.config_error is None and self.history is not None:
+            self.set_status("refreshed")
+
     def _fill_history(self, panel: HistoryPanel, history: History) -> None:
         if self.filter.active:
             panel.set_mode("files")
@@ -261,6 +286,8 @@ class EivlholeApp(App[None]):
     # --- events and actions -------------------------------------------
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if not event.data_table.has_focus:
+            return  # a refresh moved the cursor of a panel the user is not looking at
         if event.row_key is not None and event.data_table.id:
             self.show_detail(event.data_table.id, str(event.row_key.value))
 

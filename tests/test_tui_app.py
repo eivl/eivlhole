@@ -220,3 +220,57 @@ async def test_bracketed_names_render_literally(config_dir):
         app._apply_filter("[bold]x")
         await pilot.pause()
         assert "[bold]x" in str(panel.border_title)
+
+
+async def test_detail_stays_on_focused_panel_after_refresh(tui_env):
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert isinstance(app.focused, JobsPanel)
+        app.populate_history()
+        await pilot.pause()
+        app.reload()
+        await pilot.pause()
+        assert "remote_dir" in detail(app) and "run " not in detail(app)
+
+
+async def test_history_auto_refresh(tui_env):
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._maybe_refresh_history()
+        await pilot.pause()
+        panel = app.query_one(HistoryPanel)
+        before = panel.row_count
+        h = History(paths.history_file())
+        h.finish_run(h.start_run("job", job="reports", host="drop"), "ok")
+        h.close()
+        app._maybe_refresh_history()
+        await pilot.pause()
+        assert panel.row_count == before + 1
+
+
+async def test_history_refresh_failure_does_not_crash(tui_env, monkeypatch):
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        def boom(**kwargs):
+            raise RuntimeError("db gone")
+
+        monkeypatch.setattr(app.history, "runs", boom)
+        app._maybe_refresh_history()
+        await pilot.pause()
+
+
+async def test_refresh_key_reloads_config(tui_env):
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        paths.config_file().write_text(
+            paths.config_file().read_text() + '\n[jobs.nightly]\nremote_dir = "/n"\n'
+        )
+        await pilot.press("g")
+        await pilot.pause()
+        assert app.query_one(JobsPanel).row_count == 2
+        assert "refreshed" in status(app)
