@@ -48,6 +48,7 @@ class EivlholeApp(App[None]):
         self.history: History | None = None
         self.filter = data.HistoryFilter()
         self.filter_text = ""
+        self.config_error: str | None = None
         self.file_records: dict[int, FileRecord] = {}
 
     # --- layout -------------------------------------------------------
@@ -80,10 +81,12 @@ class EivlholeApp(App[None]):
 
     def reload(self) -> None:
         config_failed = False
+        self.config_error = None
         try:
             self.config = load_config(paths.config_file())
         except EivlholeError as exc:
             config_failed = True
+            self.config_error = str(exc)
             self.config = Config()
             self.set_status(str(exc), error=True)
         if self.history is None:
@@ -244,17 +247,19 @@ class EivlholeApp(App[None]):
             self.set_status(str(exc), error=True)
             return
         path = paths.config_file()
-        if not path.exists():
-            path.write_text("[defaults]\n\n[hosts]\n\n[jobs]\n", encoding="utf-8")
         try:
+            if not path.exists():
+                path.write_text("[defaults]\n\n[hosts]\n\n[jobs]\n", encoding="utf-8")
             code = self._run_editor(cmd, path)
         except OSError as exc:
-            self.set_status(f"editor failed: {exc}", error=True)
+            self.set_status(f"cannot edit config: {exc}", error=True)
             return
         self.reload()
-        if code:
+        if self.config_error:
+            self.set_status(f"config has problems: {self.config_error}", error=True)
+        elif code:
             self.set_status(f"editor exited with {code}; config reloaded", error=True)
-        elif "required" not in str(self.query_one("#status", Static).content):
+        else:
             self.set_status("config reloaded")
 
     # --- test host ----------------------------------------------------
@@ -268,12 +273,15 @@ class EivlholeApp(App[None]):
 
     @work(exclusive=True, group="host")
     async def test_host_worker(self, name: str) -> None:
-        self.set_status(f"testing {name}...")
         try:
+            self.set_status(f"testing {name}...")
             target = target_from_host(self.config.hosts[name])
             cwd = await keys.test_connection(
                 target, known_hosts=paths.known_hosts_file(), prompt_trust=None
             )
+            self.set_status(f"OK: {name} (sftp cwd {cwd})")
+            self.write_log(f"test {name}: OK")
+            self.reload()
         except EivlholeError as exc:
             self.set_status(str(exc), error=True)
             self.write_log(f"test {name}: {exc}")
@@ -282,6 +290,3 @@ class EivlholeApp(App[None]):
             log.exception("test host failed")
             self.set_status(f"test {name} failed: {exc}", error=True)
             return
-        self.set_status(f"OK: {name} (sftp cwd {cwd})")
-        self.write_log(f"test {name}: OK")
-        self.reload()

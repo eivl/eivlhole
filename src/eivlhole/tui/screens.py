@@ -51,7 +51,7 @@ class TextPrompt(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="prompt"):
-            yield Label(self.title_text)
+            yield Static(self.title_text, markup=False)
             yield Input(value=self.initial, placeholder=self.placeholder, id="value")
             yield Label("Enter = ok   Esc = cancel")
 
@@ -79,7 +79,7 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm"):
-            yield Label(self.title_text)
+            yield Static(self.title_text, markup=False)
             yield Static(self.body, id="confirm-body", markup=False)
             yield Label("y = yes   n = no")
 

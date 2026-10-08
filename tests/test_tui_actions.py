@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 
@@ -126,3 +127,33 @@ async def test_test_host_without_hosts(config_dir):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert "no host" in status(app)
+
+
+async def test_edit_leaves_invalid_config_reports(tui_env, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        paths.config_file().write_text("this is not toml")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(app_module, "editor_command", lambda: ["fake-editor"])
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("e")
+        await pilot.pause()
+        assert "config has problems" in status(app)
+        assert "config reloaded" not in status(app)
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX non-root")
+async def test_edit_config_unwritable_reports(config_dir, monkeypatch):
+    monkeypatch.setattr(app_module, "editor_command", lambda: ["fake-editor"])
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        config_dir.chmod(0o500)
+        try:
+            assert not paths.config_file().exists()
+            await pilot.press("e")
+            await pilot.pause()
+            assert "cannot edit config" in status(app)
+        finally:
+            config_dir.chmod(0o700)
