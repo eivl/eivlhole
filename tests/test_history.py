@@ -1,10 +1,23 @@
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from eivlhole.history import History
+
+_opened: list[History] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_histories():
+    yield
+    while _opened:
+        _opened.pop().close()
 
 
 def make(tmp_path):
-    return History(tmp_path / "h.sqlite")
+    h = History(tmp_path / "h.sqlite")
+    _opened.append(h)
+    return h
 
 
 def test_run_lifecycle(tmp_path):

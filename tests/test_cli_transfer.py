@@ -165,6 +165,8 @@ def test_ctrl_c_at_receive_prompt_exits_promptly(
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            pipe.close()
     assert rc == 130, stderr
     assert elapsed < 5
     assert "Traceback" not in stderr
