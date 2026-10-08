@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/eivlhole.svg)](https://pypi.org/project/eivlhole/)
 
 Wormhole-style file transfer over SSH for networks without internet access,
-plus scheduled unattended delivery (Plan 2) and a terminal UI (Plan 3).
+plus scheduled unattended delivery and a terminal UI.
 
 Nothing runs on the server except OpenSSH. A central Linux "drop host" holds
 transfers; senders get a short code, receivers type it.
