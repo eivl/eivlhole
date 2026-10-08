@@ -70,19 +70,19 @@ class EivlholeApp(App[None]):
     # --- data ---------------------------------------------------------
 
     def reload(self) -> None:
+        config_failed = False
         try:
             self.config = load_config(paths.config_file())
         except EivlholeError as exc:
+            config_failed = True
             self.config = Config()
             self.set_status(str(exc), error=True)
-        if self.history is not None:
-            self.history.close()
-            self.history = None
-        try:
-            self.history = History(paths.history_file())
-        except (sqlite3.Error, OSError) as exc:
-            log.warning("history unavailable: %s", exc)
-            self.set_status(f"history unavailable: {exc}", error=True)
+        if self.history is None:
+            try:
+                self.history = History(paths.history_file())
+            except (sqlite3.Error, OSError) as exc:
+                log.warning("history unavailable: %s", exc)
+                self.set_status(f"history unavailable: {exc}", error=True)
         jobs = data.job_rows(self.config)
         self.query_one(JobsPanel).replace_rows(
             [(j.name, j.host, j.days, j.time, j.sources) for j in jobs], [j.name for j in jobs]
@@ -96,23 +96,30 @@ class EivlholeApp(App[None]):
             [h.name for h in hosts],
         )
         self.populate_history()
-        if (
-            not self.config.hosts
-            and not self.config.jobs
-            and "required" not in str(self.query_one("#status", Static).content)
-        ):
+        if not config_failed and not self.config.hosts and not self.config.jobs:
             self.set_status(
                 "no hosts or jobs configured; run `eivlhole hosts add` / `jobs add`, or press e"
             )
+        widget = self.focused
+        if isinstance(widget, DataTable) and widget.id:
+            self.show_detail(widget.id, widget.selected_key())
 
     def populate_history(self) -> None:
         panel = self.query_one(HistoryPanel)
         if self.history is None:
             panel.replace_rows([], [])
             return
+        try:
+            self._fill_history(panel, self.history)
+        except Exception as exc:
+            log.exception("history query failed")
+            self.set_status(f"history unavailable: {exc}", error=True)
+            panel.replace_rows([], [])
+
+    def _fill_history(self, panel: HistoryPanel, history: History) -> None:
         if self.filter.active:
             panel.set_mode("files")
-            recs = data.file_rows(self.history, self.filter)
+            recs = data.file_rows(history, self.filter)
             self.file_records = {r.id: r for r in recs}
             panel.replace_rows(
                 [(data.fmt_local(r.ts), r.direction, r.filename, r.status) for r in recs],
@@ -120,7 +127,7 @@ class EivlholeApp(App[None]):
             )
         else:
             panel.set_mode("runs")
-            runs = data.run_rows(self.history)
+            runs = data.run_rows(history)
             panel.replace_rows(
                 [
                     (str(r.id), data.fmt_local(r.started), r.kind, r.job or "", r.status)
@@ -134,7 +141,7 @@ class EivlholeApp(App[None]):
 
     def set_status(self, text: str, *, error: bool = False) -> None:
         widget = self.query_one("#status", Static)
-        widget.update(Text(text, style="bold red" if error else ""))
+        widget.update(Text(text.replace("\n", " "), style="bold red" if error else ""))
 
     def write_log(self, text: str) -> None:
         self.query_one("#log", RichLog).write(text)
@@ -156,8 +163,9 @@ class EivlholeApp(App[None]):
                 text = data.file_detail(rec) if rec else "record not loaded"
             else:
                 text = ""
-        except (KeyError, EivlholeError) as exc:
-            text = str(exc)
+        except Exception as exc:
+            log.exception("detail failed")
+            text = f"cannot show details: {exc}"
         detail.update(Text(text))
 
     # --- events and actions -------------------------------------------

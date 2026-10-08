@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -187,3 +188,10 @@ def test_update_file_error(tmp_path):
     h.update_file_error(fid, "sent, but on_success 'move' failed: locked")
     (rec,) = h.files_for_run(rid)
     assert rec.status == "sent" and "on_success" in rec.error
+
+
+def test_corrupt_database_does_not_leak_connection(tmp_path):
+    path = tmp_path / "bad.sqlite"
+    path.write_bytes(b"not a database")
+    with pytest.raises(sqlite3.DatabaseError):
+        History(path)

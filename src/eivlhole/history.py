@@ -95,13 +95,17 @@ class History:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path))
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
-        row = self._conn.execute("SELECT version FROM schema_version").fetchone()
-        if row is None:
-            self._conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
-        self._conn.commit()
+        try:
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.executescript(_SCHEMA)
+            row = self._conn.execute("SELECT version FROM schema_version").fetchone()
+            if row is None:
+                self._conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+            self._conn.commit()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def __enter__(self) -> History:
         return self

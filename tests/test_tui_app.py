@@ -153,3 +153,36 @@ async def test_history_unavailable_reports(config_dir):
         await pilot.pause()
         assert "history unavailable" in status(app)
         assert app.query_one(JobsPanel).row_count == 1
+
+
+async def test_toml_syntax_error_status_is_kept(config_dir):
+    paths.config_file().write_text("this is not toml")
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert status(app).strip()
+        assert "no hosts or jobs" not in status(app)
+
+
+async def test_detail_failure_does_not_crash(tui_env, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("eivlhole.tui.app.data.job_detail", boom)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert "cannot show details" in detail(app)
+        await pilot.press("2")
+        await pilot.pause()
+        assert isinstance(app.focused, HostsPanel)
+
+
+async def test_corrupt_history_reports(config_dir):
+    write_config()
+    paths.history_file().write_bytes(b"not a database")
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert "history unavailable" in status(app)
+        assert app.query_one(JobsPanel).row_count == 1
