@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from eivlhole.cli.common import console, get_state, handle_errors
 from eivlhole.server import layout
@@ -52,6 +53,10 @@ def sweep(
         console.print(f"  transfer {t}", markup=False)
     for c in result.removed_codes:
         console.print(f"  code {c}", markup=False)
+    for e in result.errors:
+        console.print(f"[yellow]warning:[/] {escape(e)}")
+    if result.errors:
+        raise typer.Exit(1)
 
 
 @server_app.command("status")

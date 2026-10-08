@@ -145,3 +145,58 @@ def test_cli_server_init_sweep_status(tmp_path, config_dir):
     assert r.exit_code == 0 and "removed 1 transfer" in r.output
     r = runner.invoke(app, ["server", "sweep", "--root", str(root), "--max-age", "7x"])
     assert r.exit_code == 1
+
+
+def test_sweep_keeps_fresh_pair_and_removes_non_hex_code(tmp_path):
+    root = tmp_path / "srv"
+    layout.init_layout(root)
+    make_transfer(root, "a" * 32, age=timedelta(hours=1), code="1-new-new")
+    result = sweep.sweep(root, timedelta(days=7))
+    assert result.removed_codes == [] and (root / "codes" / "1-new-new").exists()
+    outside = tmp_path / "etc"
+    outside.mkdir()
+    (root / "codes" / "9-bad-bad").write_text("../../etc\n")
+    result = sweep.sweep(root, timedelta(days=7))
+    assert result.removed_codes == ["9-bad-bad"]
+    assert outside.exists() and (root / "codes" / "1-new-new").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlinks")
+def test_sweep_symlink_in_transfers_is_unlinked_not_followed(tmp_path):
+    root = tmp_path / "srv"
+    layout.init_layout(root)
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "keep.txt").write_text("x")
+    old = time.time() - 30 * 86400
+    for p in (external, external / "keep.txt"):
+        os.utime(p, (old, old))
+    tid = "d" * 32
+    (root / "transfers" / tid).symlink_to(external)
+    result = sweep.sweep(root, timedelta(days=7))
+    assert not (root / "transfers" / tid).is_symlink()
+    assert (external / "keep.txt").exists()
+    assert tid in result.removed_transfers
+
+
+@pytest.mark.skipif(
+    os.name != "posix" or os.geteuid() == 0, reason="needs non-root posix"
+)
+def test_sweep_reports_rmtree_failure(tmp_path):
+    root = tmp_path / "srv"
+    layout.init_layout(root)
+    tid = "e" * 32
+    d = make_transfer(root, tid, age=timedelta(days=30))
+    sub = d / "sub"
+    sub.mkdir()
+    (sub / "f").write_text("x")
+    old = time.time() - 30 * 86400
+    for q in (sub / "f", sub, d):
+        os.utime(q, (old, old))
+    sub.chmod(0o500)
+    try:
+        result = sweep.sweep(root, timedelta(days=7))
+        assert tid not in result.removed_transfers
+        assert result.errors
+    finally:
+        sub.chmod(0o700)

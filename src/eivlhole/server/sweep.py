@@ -14,6 +14,7 @@ from eivlhole.server.layout import CODES, TRANSFERS
 
 log = logging.getLogger(__name__)
 _DURATION_RE = re.compile(r"^(\d+)([smhdSMHD])$")
+_CODE_TARGET_RE = re.compile(r"^[0-9a-f]{32}$")
 _UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
 
 
@@ -29,6 +30,7 @@ class SweepResult:
     removed_transfers: list[str] = field(default_factory=list)
     removed_codes: list[str] = field(default_factory=list)
     kept_transfers: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 def _check_root(root: Path) -> None:
@@ -52,32 +54,53 @@ def sweep(
     _check_root(root)
     now = now or datetime.now(UTC)
     result = SweepResult()
-    live: set[str] = set()
     for d in sorted((root / TRANSFERS).iterdir()):
         if not d.is_dir():
             continue
-        if now - _newest_mtime(d) > max_age:
-            result.removed_transfers.append(d.name)
-            if not dry_run:
-                shutil.rmtree(d, ignore_errors=True)
-                log.info("removed transfer %s", d.name)
-        else:
-            live.add(d.name)
+        if now - _newest_mtime(d) <= max_age:
             result.kept_transfers += 1
+            continue
+        if dry_run:
+            result.removed_transfers.append(d.name)
+        elif d.is_symlink():
+            try:
+                d.unlink()
+            except OSError as exc:
+                result.errors.append(f"{d}: {exc}")
+                continue
+            log.warning("removed symlink entry %s", d.name)
+            result.removed_transfers.append(d.name)
+        else:
+            errors: list[str] = []
+
+            def _record(func, path, exc, _errors=errors):
+                _errors.append(f"{path}: {exc}")
+
+            shutil.rmtree(d, onexc=_record)
+            if errors:
+                result.errors.extend(errors)
+            else:
+                log.info("removed transfer %s", d.name)
+                result.removed_transfers.append(d.name)
     for c in sorted((root / CODES).iterdir()):
         if not c.is_file():
             continue
         try:
-            target = c.read_text(encoding="ascii", errors="replace").strip()
+            with c.open("rb") as fh:
+                target = fh.read(64).decode("ascii", errors="replace").strip()
         except OSError:
             target = ""
-        stale = target not in live
+        stale = not _CODE_TARGET_RE.match(target) or not (root / TRANSFERS / target).is_dir()
         old = now - datetime.fromtimestamp(c.stat().st_mtime, tz=UTC) > max_age
         if stale or old:
-            result.removed_codes.append(c.name)
             if not dry_run:
-                c.unlink(missing_ok=True)
+                try:
+                    c.unlink(missing_ok=True)
+                except OSError as exc:
+                    result.errors.append(f"{c}: {exc}")
+                    continue
                 log.info("removed code %s", c.name)
+            result.removed_codes.append(c.name)
     return result
 
 
