@@ -374,3 +374,109 @@ async def test_receive_confirm_shows_summary_for_many_files(
         assert "and 25 more" in body
         await pilot.press("n")
         await wait_for(pilot, lambda: "cancelled" in status(app))
+
+
+async def test_cancel_running_job(config_dir, ssh_server, client_key, tmp_path, monkeypatch):
+    write_full_config(ssh_server, client_key, tmp_path)
+
+    async def slow_run_job(name, config, **kwargs):
+        await asyncio.sleep(5)
+        return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
+
+    monkeypatch.setattr(app_module, "run_job", slow_run_job)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert "cancelled" in status(app)
+        await wait_for(
+            pilot, lambda: not any(w.group == "job" and w.is_running for w in app.workers)
+        )
+        await pilot.press("c")
+        await pilot.pause()
+        assert "nothing to cancel" in status(app)
+
+
+async def test_retry_backoff_is_visible(config_dir, ssh_server, client_key, tmp_path):
+    write_full_config(ssh_server, client_key, tmp_path)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app._worker_sleep(0)
+        await pilot.pause()
+        assert "retrying in 0s" in log_text(app)
+        assert "retrying in 0s" in status(app)
+
+
+async def test_run_job_gets_visible_sleep(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    write_full_config(ssh_server, client_key, tmp_path)
+    seen = {}
+
+    async def fake_run_job(name, config, **kwargs):
+        seen["sleep"] = kwargs.get("sleep")
+        await kwargs["sleep"](0)
+        return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
+
+    monkeypatch.setattr(app_module, "run_job", fake_run_job)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert seen["sleep"] == app._worker_sleep
+        assert "retrying in 0s" in log_text(app)
+
+
+async def test_edit_refused_while_running(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    write_full_config(ssh_server, client_key, tmp_path)
+
+    async def slow_run_job(name, config, **kwargs):
+        await asyncio.sleep(0.5)
+        return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
+
+    def no_editor(*args, **kwargs):
+        raise AssertionError("editor must not start")
+
+    monkeypatch.setattr(app_module, "run_job", slow_run_job)
+    monkeypatch.setattr(app_module.subprocess, "run", no_editor)
+    monkeypatch.setattr(app_module, "editor_command", lambda: ["fake-editor"])
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        assert "finish or cancel" in status(app)
+        await app.workers.wait_for_complete()
+
+
+async def test_prompts_name_the_host(config_dir, ssh_server, client_key, tmp_path):
+    from textual.widgets import Static
+
+    from eivlhole.tui.screens import TextPrompt
+
+    write_full_config(ssh_server, client_key, tmp_path)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        for key, word in (("s", "Send"), ("R", "Receive")):
+            await pilot.press(key)
+            await pilot.pause()
+            assert isinstance(app.screen, TextPrompt)
+            title = str(app.screen.query(Static).first().content)
+            assert title.startswith(f"{word} via drop:")
+            await pilot.press("escape")
+            await pilot.pause()
+
+
+def test_overwrite_hint_added(monkeypatch):
+    app = EivlholeApp()
+    seen = []
+    monkeypatch.setattr(app, "set_status", lambda text, **kw: seen.append(text))
+    monkeypatch.setattr(app, "write_log", lambda text: seen.append(text))
+    app._report_failure("receive", RuntimeError("a.txt exists; pass --overwrite"))
+    assert all("use the CLI with --overwrite" in t for t in seen) and len(seen) == 2

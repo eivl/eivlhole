@@ -274,3 +274,14 @@ async def test_refresh_key_reloads_config(tui_env):
         await pilot.pause()
         assert app.query_one(JobsPanel).row_count == 2
         assert "refreshed" in status(app)
+
+
+async def test_config_error_is_logged(config_dir):
+    paths.config_file().write_text('[hosts.bad]\nuser = "u"\n\n[hosts.worse]\nport = 1\n')
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        text = "\n".join(line.text for line in app.query_one("#log").lines)
+        assert app.config_error
+        for line in app.config_error.splitlines():
+            assert line in text

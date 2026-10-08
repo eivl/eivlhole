@@ -62,6 +62,7 @@ class EivlholeApp(App[None]):
         Binding("e", "edit_config", "Edit config"),
         Binding("t", "test_host", "Test host"),
         Binding("g", "refresh", "Refresh"),
+        Binding("c", "cancel_ops", "Cancel"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -89,7 +90,7 @@ class EivlholeApp(App[None]):
                 yield HistoryPanel(id="history")
             with Vertical(id="main"):
                 yield Static("", id="detail", expand=True)
-                yield RichLog(id="log", wrap=True, markup=False, highlight=False)
+                yield RichLog(id="log", wrap=True, markup=False, highlight=False, max_lines=2000)
                 yield ProgressBar(id="progress", total=100, show_eta=False)
         yield Static("", id="status")
         yield Footer()
@@ -170,12 +171,14 @@ class EivlholeApp(App[None]):
             self.config_error = str(exc)
             self.config = Config()
             self.set_status(str(exc), error=True)
+            self.write_log(f"config: {exc}")
         if self.history is None:
             try:
                 self.history = History(paths.history_file())
             except (sqlite3.Error, OSError) as exc:
                 log.warning("history unavailable: %s", exc)
                 self.set_status(f"history unavailable: {exc}", error=True)
+                self.write_log(f"history unavailable: {exc}")
         jobs = data.job_rows(self.config)
         self.query_one(JobsPanel).replace_rows(
             [(j.name, j.host, j.days, j.time, j.sources) for j in jobs], [j.name for j in jobs]
@@ -207,6 +210,7 @@ class EivlholeApp(App[None]):
         except Exception as exc:
             log.exception("history query failed")
             self.set_status(f"history unavailable: {exc}", error=True)
+            self.write_log(f"history unavailable: {exc}")
             panel.replace_rows([], [])
 
     def _maybe_refresh_history(self) -> None:
@@ -346,10 +350,14 @@ class EivlholeApp(App[None]):
             return subprocess.run([*cmd, str(path)]).returncode
 
     def action_edit_config(self) -> None:
+        if self._busy_workers():
+            self.set_status("finish or cancel running operations first", error=True)
+            return
         try:
             cmd = editor_command()
         except EivlholeError as exc:
             self.set_status(str(exc), error=True)
+            self.write_log(str(exc))
             return
         path = paths.config_file()
         try:
@@ -358,6 +366,7 @@ class EivlholeApp(App[None]):
             code = self._run_editor(cmd, path)
         except OSError as exc:
             self.set_status(f"cannot edit config: {exc}", error=True)
+            self.write_log(f"cannot edit config: {exc}")
             return
         self.reload()
         if self.config_error:
@@ -386,7 +395,6 @@ class EivlholeApp(App[None]):
             )
             self.set_status(f"OK: {name} (sftp cwd {cwd})")
             self.write_log(f"test {name}: OK")
-            self.reload()
         except EivlholeError as exc:
             self.set_status(str(exc), error=True)
             self.write_log(f"test {name}: {exc}")
@@ -394,6 +402,7 @@ class EivlholeApp(App[None]):
         except Exception as exc:  # noqa: BLE001 - a worker must never crash the app
             log.exception("test host failed")
             self.set_status(f"test {name} failed: {exc}", error=True)
+            self.write_log(f"test {name} failed: {exc}")
             return
 
     # --- progress -----------------------------------------------------
@@ -408,8 +417,29 @@ class EivlholeApp(App[None]):
 
     def _report_failure(self, what: str, exc: BaseException) -> None:
         text = str(exc) or type(exc).__name__
+        if "--overwrite" in text:
+            text += " (the TUI cannot overwrite; use the CLI with --overwrite)"
         self.set_status(f"{what}: {text}", error=True)
         self.write_log(f"{what}: {text}")
+
+    async def _worker_sleep(self, seconds: float) -> None:
+        """Backoff used by run_job, made visible so a dead host is not silent."""
+        self.write_log(f"retrying in {seconds:g}s")
+        self.set_status(f"retrying in {seconds:g}s (c cancels)")
+        await asyncio.sleep(seconds)
+
+    def action_cancel_ops(self) -> None:
+        cancelled = 0
+        for w in self.workers:
+            if w.group in ("job", "send", "receive") and w.is_running:
+                w.cancel()
+                cancelled += 1
+        if cancelled:
+            self._reset_progress()
+            self.set_status("cancelled")
+            self.write_log("cancelled running operations")
+        else:
+            self.set_status("nothing to cancel")
 
     # --- jobs ---------------------------------------------------------
 
@@ -441,6 +471,7 @@ class EivlholeApp(App[None]):
                 dry_run=dry_run,
                 known_hosts=paths.known_hosts_file(),
                 progress=self._progress,
+                sleep=self._worker_sleep,
             )
             for w in result.warnings:
                 self.write_log(f"warning: {w}")
@@ -479,7 +510,8 @@ class EivlholeApp(App[None]):
     def action_send(self) -> None:
         self.push_screen(
             TextPrompt(
-                "Send: file or directory paths (quote paths with spaces)",
+                f"Send via {self.config.defaults.host or '?'}: "
+                "file or directory paths (quote paths with spaces)",
                 placeholder="C:/reports/summary.xlsx",
             ),
             callback=self._start_send,
@@ -538,7 +570,10 @@ class EivlholeApp(App[None]):
 
     def action_receive(self) -> None:
         self.push_screen(
-            TextPrompt("Receive: code from the sender", placeholder="7-tunnel-stairway-glucose"),
+            TextPrompt(
+                f"Receive via {self.config.defaults.host or '?'}: code from the sender",
+                placeholder="7-tunnel-stairway-glucose",
+            ),
             callback=self._start_receive,
         )
 
