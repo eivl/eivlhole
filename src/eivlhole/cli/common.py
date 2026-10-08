@@ -15,6 +15,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.prompt import Confirm
 
 from eivlhole import paths
@@ -56,7 +57,9 @@ class State:
             return None
 
         def prompt(target: SSHTarget, fp: str) -> bool:
-            console.print(f"The authenticity of host [bold]{target.label}[/] can't be established.")
+            console.print(
+                f"The authenticity of host [bold]{escape(target.label)}[/] can't be established."
+            )
             console.print(f"Host key fingerprint: [bold]{fp}[/]")
             return Confirm.ask("Trust this host and remember its key?", default=False)
 
@@ -113,6 +116,7 @@ def setup_logging(verbose: bool) -> None:
     if _stderr_handler is None:
         _stderr_handler = _StderrHandler()
         _stderr_handler.setFormatter(_FMT)
+        _stderr_handler.addFilter(lambda r: getattr(r, "console", True))
         root.addHandler(_stderr_handler)
     _stderr_handler.setLevel(logging.DEBUG if verbose else logging.WARNING)
     logging.getLogger("asyncssh").setLevel(logging.WARNING)
@@ -124,8 +128,8 @@ def handle_errors[T](fn: Callable[..., T]) -> Callable[..., T]:
         try:
             return fn(*args, **kwargs)
         except EivlholeError as exc:
-            logging.getLogger("eivlhole").error("%s", exc)
-            err.print(f"[red]error:[/] {exc}")
+            logging.getLogger("eivlhole").error("%s", exc, extra={"console": False})
+            err.print(f"[red]error:[/] {escape(str(exc))}", soft_wrap=True)
             raise typer.Exit(exc.exit_code) from exc
         except KeyboardInterrupt as exc:
             err.print("interrupted")

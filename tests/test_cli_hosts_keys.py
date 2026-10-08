@@ -1,4 +1,5 @@
 import re
+import sys
 
 from typer.testing import CliRunner
 
@@ -137,3 +138,37 @@ def test_log_file_written(config_dir):
     runner.invoke(app, ["keys", "init"])
     log = paths.log_dir() / "eivlhole.log"
     assert log.exists() and re.search(r"generated key", log.read_text())
+
+
+def test_error_printed_once(config_dir):
+    r = runner.invoke(app, ["hosts", "remove", "ghost"])
+    assert r.exit_code == 1
+    assert r.output.count("unknown host 'ghost'") == 1
+    assert "unknown host 'ghost'" in (paths.log_dir() / "eivlhole.log").read_text()
+
+
+def test_error_with_brackets_is_printed_verbatim(config_dir):
+    r = runner.invoke(app, ["hosts", "remove", "[bold]x"])
+    assert r.exit_code == 1
+    assert "unknown host '[bold]x'" in r.output
+
+
+def test_config_edit_unattended_fails(config_dir):
+    r = runner.invoke(app, ["--unattended", "config", "edit"])
+    assert r.exit_code == 1 and "interactive" in r.output
+
+
+def test_config_edit_runs_editor_and_validates(config_dir, monkeypatch):
+    script = "import sys,pathlib; pathlib.Path(sys.argv[1]).write_text('[defaults]\\n')"
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.setenv("EDITOR", f'"{sys.executable}" -c "{script}"')
+    r = runner.invoke(app, ["config", "edit"])
+    assert r.exit_code == 0, r.output
+    assert "config OK" in r.output
+
+
+def test_config_edit_missing_editor(config_dir, monkeypatch):
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.setenv("EDITOR", "no-such-editor-xyz")
+    r = runner.invoke(app, ["config", "edit"])
+    assert r.exit_code == 1 and "editor not found" in r.output

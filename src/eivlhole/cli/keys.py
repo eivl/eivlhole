@@ -22,7 +22,7 @@ def init(
     """Generate the tool-managed ed25519 key."""
     get_state(ctx)
     priv, pub = keys.generate_keypair(paths.private_key_file(), force=force)
-    console.print(f"generated {priv}")
+    console.print(f"generated {priv}", markup=False)
     console.print("Public key (give this to an admin, or run `eivlhole keys enrol`):")
     console.print(keys.public_key_line(pub), markup=False, highlight=False)
 
@@ -59,9 +59,9 @@ def enrol(
         target, password, line, known_hosts=state.known_hosts(), prompt_trust=state.trust_prompt()
     ))
     if added:
-        console.print(f"enrolled public key on {target.label}")
+        console.print(f"enrolled public key on {target.label}", markup=False)
     else:
-        console.print(f"public key already present on {target.label}")
+        console.print(f"public key already present on {target.label}", markup=False)
 
 
 @keys_app.command("test")
@@ -77,4 +77,4 @@ def test(
     cwd = run_async(keys.test_connection(
         target, known_hosts=state.known_hosts(), prompt_trust=state.trust_prompt()
     ))
-    console.print(f"OK: {target.label} (sftp cwd {cwd})")
+    console.print(f"OK: {target.label} (sftp cwd {cwd})", markup=False)

@@ -1,6 +1,7 @@
 """eivlhole hosts: add, list, trust, remove."""
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from eivlhole.cli.common import console, get_state, handle_errors, run_async
@@ -40,10 +41,10 @@ def add(
     if default or cfg.defaults.host is None:
         cfg.defaults.host = name
     state.save()
-    console.print(f"added host [bold]{name}[/] ({user}@{hostname}:{port})")
+    console.print(f"added host [bold]{escape(name)}[/] ({escape(user)}@{escape(hostname)}:{port})")
     if cfg.defaults.host == name:
-        console.print(f"[dim]{name} is the default host[/]")
-    console.print(f"Next: eivlhole hosts trust {name}")
+        console.print(f"[dim]{escape(name)} is the default host[/]")
+    console.print(f"Next: eivlhole hosts trust {name}", markup=False)
 
 
 @hosts_app.command("list")
@@ -57,7 +58,8 @@ def list_(ctx: typer.Context) -> None:
         target = target_from_host(host)
         trusted = "yes" if find_pinned(target, state.known_hosts()) else "no"
         table.add_row(
-            host.name, host.hostname, str(host.port), host.user, host.key or "(tool key)",
+            escape(host.name), escape(host.hostname), str(host.port), escape(host.user),
+            escape(host.key or "(tool key)"),
             trusted, "*" if cfg.defaults.host == host.name else "",
         )
     console.print(table)
@@ -76,13 +78,15 @@ def trust(
     host = state.config.host_for(name)
     target = target_from_host(host)
     key = run_async(fetch_host_key(target))
-    console.print(f"{target.label} host key fingerprint: [bold]{fingerprint(key)}[/]")
+    console.print(
+        f"{escape(target.label)} host key fingerprint: [bold]{fingerprint(key)}[/]"
+    )
     if not yes and not state.confirm("Trust this host?", default=False):
         raise EivlholeError("host not trusted")
     if pin_host_key(target, key, state.known_hosts(), replace=replace):
-        console.print(f"pinned host key for {host.name}")
+        console.print(f"pinned host key for {host.name}", markup=False)
     else:
-        console.print(f"host key for {host.name} already pinned")
+        console.print(f"host key for {host.name} already pinned", markup=False)
 
 
 @hosts_app.command("remove")
@@ -100,4 +104,4 @@ def remove(ctx: typer.Context, name: str) -> None:
     if cfg.defaults.host == name:
         cfg.defaults.host = None
     state.save()
-    console.print(f"removed host {name}")
+    console.print(f"removed host {name}", markup=False)
