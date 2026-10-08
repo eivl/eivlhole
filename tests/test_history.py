@@ -107,5 +107,7 @@ def test_files_exact_name_with_brackets(tmp_path):
             status="sent",
         )
     assert [f.filename for f in h.files(["report[1].csv"])] == ["report[1].csv"]
+    assert [f.filename for f in h.files(["report1.csv"])] == ["report1.csv"]
     assert len(h.files(["report*.csv"])) == 2
+    assert [f.filename for f in h.files(["report?.csv"])] == ["report1.csv"]
     h.close()

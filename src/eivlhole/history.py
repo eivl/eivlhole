@@ -56,6 +56,10 @@ def _day_bounds(day: date) -> tuple[str, str]:
     return start.isoformat(timespec="seconds"), end.isoformat(timespec="microseconds")
 
 
+def _is_glob(name: str) -> bool:
+    return "*" in name or "?" in name
+
+
 @dataclass
 class RunRecord:
     id: int
@@ -164,18 +168,23 @@ class History:
         status: str | None = None,
         limit: int = 50,
     ) -> list[FileRecord]:
+        """Query file movements, newest first.
+
+        A name is a glob if and only if it contains ``*`` or ``?``; otherwise it
+        is matched exactly. Bracket-only patterns such as ``report[12].csv`` are
+        therefore exact names (add a ``*`` to make them a glob).
+        """
         where: list[str] = []
         params: list[object] = []
         if names:
-            # An exact filename wins over glob interpretation, so names with
-            # [ ] * ? match themselves; otherwise the name is a glob.
-            clause = (
-                "(f.filename = ? OR (f.filename GLOB ?"
-                " AND NOT EXISTS (SELECT 1 FROM files e WHERE e.filename = ?)))"
+            where.append(
+                "("
+                + " OR ".join(
+                    "f.filename GLOB ?" if _is_glob(n) else "f.filename = ?" for n in names
+                )
+                + ")"
             )
-            where.append("(" + " OR ".join(clause for _ in names) + ")")
-            for name in names:
-                params.extend([name, name, name])
+            params.extend(names)
         if on is not None:
             lo, hi = _day_bounds(on)
             where.append("f.ts >= ? AND f.ts <= ?")
