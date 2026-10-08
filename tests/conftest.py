@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import gc
 import os
 import posixpath
 import threading
@@ -57,7 +59,12 @@ def ssh_server(tmp_path: Path):
         known_hosts=tmp_path / "server_known_hosts",
     )
 
+    conns: list[asyncssh.SSHServerConnection] = []
+
     class Server(asyncssh.SSHServer):
+        def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
+            conns.append(conn)
+
         def begin_auth(self, username: str) -> bool:
             return True
 
@@ -120,13 +127,37 @@ def ssh_server(tmp_path: Path):
     )
     yield server
 
-    def stop() -> None:
-        holder["listener"].close()
-        loop.stop()
+    async def shutdown() -> None:
+        # Close accepted connections and the listener inside the loop so their
+        # sockets are released before the loop stops (otherwise Windows reports
+        # them as unraisable ResourceWarnings at garbage-collection time).
+        listener = holder["listener"]
+        listener.close()
+        for conn in conns:
+            conn.close()
+        for conn in conns:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(conn.wait_closed(), 5)
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(listener.wait_closed(), 5)
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await loop.shutdown_asyncgens()
 
-    loop.call_soon_threadsafe(stop)
+    with contextlib.suppress(Exception):
+        asyncio.run_coroutine_threadsafe(shutdown(), loop).result(20)
+    loop.call_soon_threadsafe(loop.stop)
     thread.join(10)
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage():
+    """Make leaked sockets and database handles warn inside the test that leaked them."""
+    yield
+    gc.collect()
 
 
 @pytest.fixture

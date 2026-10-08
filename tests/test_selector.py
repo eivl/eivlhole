@@ -102,7 +102,7 @@ def test_directories_are_not_selected(tmp_path):
 
 
 @pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory modes"
+    os.name != "posix" or os.geteuid() == 0, reason="needs POSIX directory modes as non-root"
 )
 def test_unreadable_pattern_dir_warns(tmp_path):
     locked = tmp_path / "locked"
@@ -173,7 +173,7 @@ def test_recursive_unreadable_subdir_keeps_other_matches(tmp_path):
 
 
 @pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory modes"
+    os.name != "posix" or os.geteuid() == 0, reason="needs POSIX directory modes as non-root"
 )
 def test_recursive_unreadable_pattern_dir_warns(tmp_path):
     locked = tmp_path / "locked"

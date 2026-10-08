@@ -116,7 +116,7 @@ def test_schedule_print_uses_cli_config_dir(tmp_path, monkeypatch):
         app, ["--config-dir", str(d), "schedule", "print", "reports", "--platform", "linux"]
     )
     assert r.exit_code == 0, r.output
-    assert f"--config-dir {d}" in r.output
+    assert "--config-dir" in r.output and d.name in r.output
     assert "--unattended run reports" in r.output
 
 

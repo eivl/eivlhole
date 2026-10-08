@@ -1,3 +1,5 @@
+import re
+
 from typer.testing import CliRunner
 
 from eivlhole.cli.app import app
@@ -7,7 +9,8 @@ runner = CliRunner()
 
 def test_ui_command_is_registered():
     r = runner.invoke(app, ["--help"])
-    assert r.exit_code == 0 and " ui " in r.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)
+    assert r.exit_code == 0 and " ui " in plain
     r = runner.invoke(app, ["ui", "--help"])
     assert r.exit_code == 0 and "terminal" in r.output.lower()
 

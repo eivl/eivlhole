@@ -183,8 +183,10 @@ async def test_receive_unknown_code_reports(config_dir, ssh_server, client_key, 
 async def test_navigation_during_worker(config_dir, ssh_server, client_key, tmp_path, monkeypatch):
     write_full_config(ssh_server, client_key, tmp_path)
 
+    release = asyncio.Event()
+
     async def slow_run_job(name, config, **kwargs):
-        await asyncio.sleep(0.5)
+        await release.wait()
         return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
 
     monkeypatch.setattr(app_module, "run_job", slow_run_job)
@@ -196,6 +198,7 @@ async def test_navigation_during_worker(config_dir, ssh_server, client_key, tmp_
         await pilot.press("2")
         await pilot.pause()
         assert isinstance(app.focused, HostsPanel)
+        release.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert "ok" in status(app)

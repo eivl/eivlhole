@@ -23,7 +23,7 @@ class Decision:
 @cache
 def _country(country: str, year: int) -> holidays.HolidayBase:
     try:
-        return holidays.country_holidays(country, years=[year])
+        return holidays.country_holidays(country, years=[year], language="en_US")
     except (NotImplementedError, KeyError) as exc:
         raise ConfigError(f"unknown holiday country {country!r}") from exc
 

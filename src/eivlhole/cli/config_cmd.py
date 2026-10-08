@@ -43,7 +43,7 @@ def _editor_command() -> list[str]:
 def path(ctx: typer.Context) -> None:
     """Print the config file path."""
     get_state(ctx)
-    console.print(str(paths.config_file()), markup=False, highlight=False)
+    console.print(str(paths.config_file()), markup=False, highlight=False, soft_wrap=True)
 
 
 @config_app.command("edit")

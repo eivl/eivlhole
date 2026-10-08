@@ -48,10 +48,11 @@ class FakeRun:
 def test_build_spec_uses_config_dir_and_unattended(monkeypatch):
     monkeypatch.setattr(base, "resolve_command", lambda: ["/usr/local/bin/eivlhole"])
     spec = base.build_spec(JOB, Path("/home/me/.config/eivlhole"))
+    resolved = str(Path("/home/me/.config/eivlhole").resolve())
     assert spec.command == [
         "/usr/local/bin/eivlhole",
         "--config-dir",
-        "/home/me/.config/eivlhole",
+        resolved,
         "--unattended",
         "run",
         "reports",
