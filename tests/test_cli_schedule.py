@@ -116,6 +116,17 @@ def test_schedule_print_uses_cli_config_dir(tmp_path, monkeypatch):
         app, ["--config-dir", str(d), "schedule", "print", "reports", "--platform", "linux"]
     )
     assert r.exit_code == 0, r.output
-    flat = " ".join(r.output.split())  # console wraps long lines
-    assert f"--config-dir {d}" in flat
-    assert "--unattended run reports" in flat
+    assert f"--config-dir {d}" in r.output
+    assert "--unattended run reports" in r.output
+
+
+def test_schedule_print_long_cron_line_not_wrapped(config_dir, monkeypatch):
+    write_config()
+    monkeypatch.setattr(base, "resolve_command", lambda: ["/opt/" + "x" * 60 + "/eivlhole"])
+    r = runner.invoke(app, ["schedule", "print", "reports", "--platform", "linux"])
+    assert r.exit_code == 0, r.output
+    lines = [ln for ln in r.output.splitlines() if "# eivlhole:reports" in ln]
+    # the definition and the manual instructions each repeat the cron line; both must be intact
+    assert len(lines) == 2
+    assert all(ln.strip().startswith("0 7 * * 2,4 ") for ln in lines)
+    assert lines[0].startswith("0 7 * * 2,4 ")

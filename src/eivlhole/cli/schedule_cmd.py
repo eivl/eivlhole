@@ -34,8 +34,8 @@ def print_(ctx: typer.Context, job: str, platform: str | None = _PLATFORM) -> No
     """Show the task definition and how to register it by hand."""
     spec = _spec(ctx, job)
     sched = _scheduler(platform)
-    console.print(sched.render(spec), markup=False, highlight=False)
-    console.print(sched.manual(spec), markup=False, highlight=False)
+    console.print(sched.render(spec), markup=False, highlight=False, soft_wrap=True)
+    console.print(sched.manual(spec), markup=False, highlight=False, soft_wrap=True)
 
 
 @schedule_app.command("install")
@@ -50,7 +50,7 @@ def install(ctx: typer.Context, job: str, platform: str | None = _PLATFORM) -> N
         console.print(f"installed {escape(job)} with {sched.name}: {spec.time} on {days}")
         return
     err.print(f"[red]could not register with {sched.name}:[/] {escape(result.output)}")
-    console.print(result.manual, markup=False, highlight=False)
+    console.print(result.manual, markup=False, highlight=False, soft_wrap=True)
     raise typer.Exit(1)
 
 
@@ -65,7 +65,7 @@ def uninstall(ctx: typer.Context, job: str, platform: str | None = _PLATFORM) ->
         console.print(f"removed {escape(job)} from {sched.name}")
         return
     err.print(f"[red]could not remove from {sched.name}:[/] {escape(result.output)}")
-    console.print(result.manual, markup=False, highlight=False)
+    console.print(result.manual, markup=False, highlight=False, soft_wrap=True)
     raise typer.Exit(1)
 
 
@@ -79,4 +79,4 @@ def status(ctx: typer.Context, job: str, platform: str | None = _PLATFORM) -> No
     if found is None:
         console.print(f"{escape(job)}: not installed in {sched.name}")
     else:
-        console.print(found, markup=False, highlight=False)
+        console.print(found, markup=False, highlight=False, soft_wrap=True)
