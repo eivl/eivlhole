@@ -17,7 +17,7 @@ uv tool install --index-url https://ARTIFACTORY/api/pypi/pypi/simple eivlhole
 From a wheel carried over by USB (dependencies still resolve from Artifactory):
 
 ```
-uv tool install --index-url https://ARTIFACTORY/api/pypi/pypi/simple ./eivlhole-0.1.0-py3-none-any.whl
+uv tool install --index-url https://ARTIFACTORY/api/pypi/pypi/simple ./eivlhole-0.2.0-py3-none-any.whl
 ```
 
 Equivalent with pip: `pip install --index-url ... eivlhole`.

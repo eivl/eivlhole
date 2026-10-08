@@ -1,6 +1,6 @@
 [project]
 name = "eivlhole"
-version = "0.1.0"
+version = "0.2.0"
 description = "Wormhole-style file transfer over SSH for protected networks, with scheduled unattended delivery."
 readme = "README.md"
 requires-python = ">=3.13"
