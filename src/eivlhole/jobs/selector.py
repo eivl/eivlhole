@@ -1,4 +1,8 @@
-"""Resolve a job's `files` and `patterns` into the list of local files to send."""
+"""Resolve a job's `files` and `patterns` into the list of local files to send.
+
+In recursive mode symlinked directories are not followed (rglob default), while
+symlinks to files are selected.
+"""
 
 from __future__ import annotations
 
@@ -39,8 +43,12 @@ def select_files(job: JobConfig) -> Selection:
             sel.warnings.append(f"pattern directory {pat.dir} does not exist")
             continue
         rx = re.compile(pat.regex)
-        candidates = d.rglob("*") if pat.recursive else d.iterdir()
-        matched = sorted(f for f in candidates if f.is_file() and rx.fullmatch(f.name))
+        try:
+            candidates = d.rglob("*") if pat.recursive else d.iterdir()
+            matched = sorted(f for f in candidates if f.is_file() and rx.fullmatch(f.name))
+        except OSError as exc:
+            sel.warnings.append(f"cannot read pattern directory {pat.dir}: {exc}")
+            continue
         if not matched:
             sel.warnings.append(f"pattern {pat.regex!r} in {pat.dir} matched no files")
         for f in matched:

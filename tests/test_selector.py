@@ -1,4 +1,7 @@
+import os
 from pathlib import Path
+
+import pytest
 
 from eivlhole.config import JobConfig, PatternConfig
 from eivlhole.jobs.selector import select_files
@@ -96,3 +99,26 @@ def test_directories_are_not_selected(tmp_path):
     job = JobConfig(name="j", remote_dir="/x", patterns=[PatternConfig(dir=str(d), regex=r"sub")])
     sel = select_files(job)
     assert sel.files == []
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory modes"
+)
+def test_unreadable_pattern_dir_warns(tmp_path):
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "daily-1.csv").write_text("x")
+    (tmp_path / "keep.txt").write_text("k")
+    locked.chmod(0o000)
+    try:
+        job = JobConfig(
+            name="j",
+            remote_dir="/x",
+            files=[str(tmp_path / "keep.txt")],
+            patterns=[PatternConfig(dir=str(locked), regex=r".*\.csv")],
+        )
+        sel = select_files(job)
+        assert [p.name for p in sel.files] == ["keep.txt"]
+        assert len(sel.warnings) == 1 and "cannot read pattern directory" in sel.warnings[0]
+    finally:
+        locked.chmod(0o700)
