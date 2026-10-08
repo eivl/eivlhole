@@ -18,6 +18,7 @@ from eivlhole.cli.run_cmd import run
 from eivlhole.cli.schedule_cmd import schedule_app
 from eivlhole.cli.server import server_app
 from eivlhole.cli.transfer_cmd import receive, send
+from eivlhole.cli.ui import ui
 
 app = typer.Typer(
     name="eivlhole",
@@ -36,6 +37,7 @@ app.add_typer(holidays_app, name="holidays")
 app.command("run")(run)
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(history_app, name="history")
+app.command("ui")(ui)
 
 
 def _version_callback(value: bool) -> None:

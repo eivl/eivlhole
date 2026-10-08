@@ -174,6 +174,22 @@ eivlhole history show 42
 
 Add `--json` to any of them for one JSON object per line.
 
+## Terminal interface
+
+```
+eivlhole ui
+```
+
+Three panels on the left (Jobs, Hosts, History; keys `1`, `2`, `3`), details
+and a live log on the right. `r` runs the selected job, `d` dry-runs it, `s`
+sends files, `R` receives by code, `t` tests the selected host, `e` opens the
+config in `$EDITOR` and reloads it, `/` filters the history by filename or
+glob plus an optional date or `start..end` range, `?` shows the keys.
+
+The interface never prompts for host trust; run `eivlhole hosts trust NAME`
+in a shell first. A send that nobody receives keeps waiting in the background
+until you quit; its code stays in the log.
+
 ## Configuration
 
 `config.toml` lives in `~/.config/eivlhole/` (Linux) or `%APPDATA%\eivlhole\`
