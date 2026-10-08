@@ -11,6 +11,7 @@ from eivlhole.cli.common import State, setup_logging
 from eivlhole.cli.config_cmd import config_app
 from eivlhole.cli.hosts import hosts_app
 from eivlhole.cli.keys import keys_app
+from eivlhole.cli.transfer_cmd import receive, send
 
 app = typer.Typer(
     name="eivlhole",
@@ -21,6 +22,8 @@ app = typer.Typer(
 app.add_typer(hosts_app, name="hosts")
 app.add_typer(keys_app, name="keys")
 app.add_typer(config_app, name="config")
+app.command("send")(send)
+app.command("receive")(receive)
 
 
 def _version_callback(value: bool) -> None:
