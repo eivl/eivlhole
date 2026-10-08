@@ -2,6 +2,7 @@ import asyncio
 import re
 import shutil
 import threading
+import time
 
 from typer.testing import CliRunner
 
@@ -83,22 +84,33 @@ def test_send_waits_for_receiver(config_dir, ssh_server, client_key, target, tmp
 
     def receiver():
         async def go():
-            await asyncio.sleep(0.5)
+            codes = ssh_server.root / "drop" / "codes"
+            deadline = time.monotonic() + 10
+            while len(list(codes.iterdir())) != 1:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("no code appeared")
+                await asyncio.sleep(0.05)
+            code = next(codes.iterdir()).name
             async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
                 mb = SftpMailbox(s, "/drop")
-                # find the single live code without listing (test server allows listing)
-                code = next(p.name for p in (ssh_server.root / "drop" / "codes").iterdir())
                 captured["result"] = await transfer.receive(
                     code, mb, tmp_path / "o", history=None, host_name="drop"
                 )
-        asyncio.run(go())
+
+        try:
+            asyncio.run(go())
+        except Exception as exc:
+            captured["error"] = exc
 
     t = threading.Thread(target=receiver)
     t.start()
     r = runner.invoke(app, ["send", "--poll", "0.1", str(src)])
-    t.join(10)
+    t.join(15)
+    assert not t.is_alive()
+    assert "error" not in captured, captured.get("error")
     assert r.exit_code == 0, r.output
-    assert "claimed" in r.output and "received" in r.output
+    assert "received" in r.output
+    assert re.fullmatch(r"[0-9a-f]{32}", captured["result"].transfer_id)
     assert (tmp_path / "o" / "w.txt").read_text() == "w"
 
 

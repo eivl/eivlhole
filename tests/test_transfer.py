@@ -127,6 +127,40 @@ async def test_receive_declined_leaves_transfer(target, ssh_server, drop, tmp_pa
         assert await mb.resolve(res.code) == res.transfer_id
 
 
+async def test_receive_accepts_async_confirm(target, ssh_server, drop, tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        res = await transfer.send([f], mb, history=None, host_name="drop")
+
+        async def yes(manifest):
+            return True
+
+        got = await transfer.receive(
+            res.code, mb, tmp_path / "out", history=None, host_name="drop", confirm=yes
+        )
+        assert (tmp_path / "out" / "f.txt").read_text() == "x"
+        assert got.files
+
+
+async def test_receive_async_confirm_can_decline(target, ssh_server, drop, tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("x")
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        res = await transfer.send([f], mb, history=None, host_name="drop")
+
+        async def no(manifest):
+            return False
+
+        with pytest.raises(TransferError, match="cancelled"):
+            await transfer.receive(
+                res.code, mb, tmp_path / "out", history=None, host_name="drop", confirm=no
+            )
+        assert (drop / "codes" / res.code).exists()
+
+
 async def test_receive_refuses_overwrite(target, ssh_server, drop, tmp_path):
     f = tmp_path / "f.txt"
     f.write_text("new")

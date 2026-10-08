@@ -1,5 +1,6 @@
 """eivlhole send / receive."""
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -39,14 +40,22 @@ def transfer_progress() -> Iterator[ProgressFn]:
         transient=True,
     )
     tasks: dict[str, int] = {}
+    started = False
 
     def cb(name: str, done: int, total: int) -> None:
+        nonlocal started
+        if not started:
+            progress.start()
+            started = True
         if name not in tasks:
             tasks[name] = progress.add_task(name, total=total)
         progress.update(tasks[name], completed=done, total=total)
 
-    with progress:
+    try:
         yield cb
+    finally:
+        if started:
+            progress.stop()
 
 
 def _print_manifest(manifest: Manifest) -> None:
@@ -75,6 +84,8 @@ def send(
     target = target_from_host(host)
     words = code_length or cfg.defaults.code_words
 
+    sent: dict[str, transfer.SendResult] = {}
+
     async def go() -> None:
         async with sftp(
             target, known_hosts=state.known_hosts(), prompt_trust=state.trust_prompt()
@@ -84,6 +95,7 @@ def send(
                 result = await transfer.send(
                     paths_, mailbox, history=hist, host_name=host.name, words=words, progress=cb
                 )
+            sent["result"] = result
             total = sum(e.size for e in result.files)
             console.print(f"Sent {len(result.files)} file(s), {format_size(total)}.")
             console.print(f"Code: [bold green]{result.code}[/]")
@@ -93,24 +105,28 @@ def send(
             console.print(
                 "[dim]Waiting for the receiver (Ctrl-C leaves the transfer on the drop host)[/]"
             )
-            try:
-                await transfer.wait_for_receipt(
-                    mailbox,
-                    result.transfer_id,
-                    poll=poll,
-                    on_state=lambda st: console.print(f"[dim]{escape(str(st))}[/]"),
-                )
-            except KeyboardInterrupt:
-                console.print(
-                    f"Transfer left on the drop host; code {result.code} stays valid until swept."
-                )
-                return
+            await transfer.wait_for_receipt(
+                mailbox,
+                result.transfer_id,
+                poll=poll,
+                on_state=lambda st: console.print(f"[dim]{escape(str(st))}[/]"),
+            )
             console.print("[green]Done.[/]")
 
     try:
         run_async(go())
-    except KeyboardInterrupt:
-        console.print("Transfer left on the drop host; the code stays valid until swept.")
+    except KeyboardInterrupt as exc:
+        if "result" in sent:
+            console.print(
+                f"Transfer left on the drop host; code {sent['result'].code} "
+                "stays valid until swept."
+            )
+        else:
+            console.print(
+                "Interrupted before the transfer was published; "
+                "nothing was left on the drop host."
+            )
+        raise typer.Exit(130) from exc
 
 
 @handle_errors
@@ -137,11 +153,13 @@ def receive(
     target = target_from_host(host)
     out_dir = out or Path(cfg.defaults.receive_dir)
 
-    def confirm(manifest: Manifest) -> bool:
+    async def confirm(manifest: Manifest) -> bool:
         _print_manifest(manifest)
         if yes or state.unattended:
             return True
-        return Confirm.ask(f"Receive into {escape(str(out_dir.resolve()))}?", default=True)
+        return await asyncio.to_thread(
+            Confirm.ask, f"Receive into {escape(str(out_dir.resolve()))}?", default=True
+        )
 
     async def go() -> transfer.ReceiveResult:
         async with sftp(

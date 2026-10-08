@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import getpass
 import hashlib
+import inspect
 import logging
 import socket
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -158,7 +159,7 @@ async def receive(
     *,
     history: History | None,
     host_name: str,
-    confirm: Callable[[Manifest], bool] | None = None,
+    confirm: Callable[[Manifest], bool | Awaitable[bool]] | None = None,
     overwrite: bool = False,
     progress: ProgressFn | None = None,
 ) -> ReceiveResult:
@@ -179,8 +180,12 @@ async def receive(
             + ", ".join(str(out_dir / c) for c in conflicts)
             + " already exists"
         )
-    if confirm is not None and not confirm(manifest):
-        raise TransferError("receive cancelled; the code is still valid")
+    if confirm is not None:
+        decision = confirm(manifest)
+        if inspect.isawaitable(decision):
+            decision = await decision
+        if not decision:
+            raise TransferError("receive cancelled; the code is still valid")
 
     await mailbox.claim(code, transfer_id)
     run_id = _safe(history, lambda h: h.start_run("receive", host=host_name))
