@@ -17,6 +17,16 @@ _FORBIDDEN_CHARS = set(':<>"|?*\\')
 _RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10)}
 
 
+def _is_control(ch: str) -> bool:
+    code = ord(ch)
+    return code < 32 or code == 127 or 0x80 <= code <= 0x9F
+
+
+def sanitize_text(s: str) -> str:
+    """Drop control characters so remote text cannot drive the terminal."""
+    return "".join(ch for ch in s if not _is_control(ch))
+
+
 def _unsafe_segment(seg: str) -> bool:
     if seg in ("", ".", ".."):
         return True
@@ -75,10 +85,15 @@ class Manifest:
                 and isinstance(f.get("sha256"), str)
             ):
                 raise ValueError(f"malformed manifest entry: {f!r}")
+            if any(_is_control(ch) for ch in f["path"]):
+                raise ValueError(f"control character in manifest path: {f['path']!r}")
             entries.append(ManifestEntry(path=f["path"], size=f["size"], sha256=f["sha256"]))
+        sender = data["sender"]
+        if not isinstance(sender, str):
+            raise ValueError("manifest sender is not a string")
         return cls(
             created=data["created"],
-            sender=data["sender"],
+            sender=sanitize_text(sender),
             files=entries,
             version=data.get("version", 1),
         )

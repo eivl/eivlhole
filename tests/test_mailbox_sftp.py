@@ -206,3 +206,25 @@ async def test_put_file_makedirs_error_is_mailbox_error(
         monkeypatch.setattr(s, "makedirs", denied)
         with pytest.raises(MailboxError, match="upload of sub/x.txt failed"):
             await mb.put_file(tid, "sub/x.txt", local)
+
+
+def test_manifest_sender_control_chars_stripped():
+    text = json.dumps({"created": "c", "sender": "me\x1b]0;evil\x07@host", "files": []})
+    assert Manifest.from_json(text).sender == "me]0;evil@host"
+
+
+@pytest.mark.parametrize("path", ["a\x1b[31m.txt", "a\x7f.txt"])
+def test_manifest_path_control_chars_rejected(path):
+    text = json.dumps(
+        {"created": "c", "sender": "s", "files": [{"path": path, "size": 1, "sha256": "x"}]}
+    )
+    with pytest.raises(ValueError):
+        Manifest.from_json(text)
+
+
+async def test_failure_text_sanitized(target, ssh_server, drop):
+    async with sftp(target, known_hosts=ssh_server.known_hosts) as s:
+        mb = SftpMailbox(s, "/drop")
+        tid = await mb.allocate()
+        (drop / "transfers" / tid / "failed").write_text("\x1b[31mchecksum mismatch\x1b[0m")
+        assert await mb.failure(tid) == "[31mchecksum mismatch[0m"

@@ -35,7 +35,7 @@ async def test_filter_switches_history_to_files(tui_env):
         await submit_prompt(app, pilot, "summary.xlsx")
         panel = app.query_one(HistoryPanel)
         assert panel.mode == "files" and panel.row_count == 1
-        assert panel.get_row_at(0)[2] == "summary.xlsx"
+        assert str(panel.get_row_at(0)[2]) == "summary.xlsx"
         assert "summary.xlsx" in panel.border_title
         await pilot.press("3")
         await pilot.pause()

@@ -74,9 +74,9 @@ async def test_panels_populate_from_config_and_history(tui_env):
         jobs = app.query_one(JobsPanel)
         hosts = app.query_one(HostsPanel)
         history = app.query_one(HistoryPanel)
-        assert jobs.row_count == 1 and jobs.get_row_at(0)[0] == "reports"
-        assert hosts.row_count == 1 and hosts.get_row_at(0)[0] == "drop"
-        assert history.row_count == 2 and history.get_row_at(0)[0] == str(r2)  # newest first
+        assert jobs.row_count == 1 and str(jobs.get_row_at(0)[0]) == "reports"
+        assert hosts.row_count == 1 and str(hosts.get_row_at(0)[0]) == "drop"
+        assert history.row_count == 2 and str(history.get_row_at(0)[0]) == str(r2)  # newest first
         assert app.focused is jobs
         assert "reports" in detail(app) and "remote_dir" in detail(app)
 
@@ -186,3 +186,37 @@ async def test_corrupt_history_reports(config_dir):
         await pilot.pause()
         assert "history unavailable" in status(app)
         assert app.query_one(JobsPanel).row_count == 1
+
+
+async def test_bracketed_names_render_literally(config_dir):
+    paths.config_file().write_text(
+        '[defaults]\nhost = "drop"\n\n'
+        '[hosts.drop]\nhostname = "10.0.0.5"\nuser = "eivlhole"\n\n'
+        '[jobs."weekly [/old]"]\nremote_dir = "/incoming"\nfiles = ["/tmp/nope.xlsx"]\n'
+    )
+    h = History(paths.history_file())
+    run = h.start_run("job", job="weekly [/old]", host="drop")
+    h.add_file(
+        run,
+        direction="out",
+        filename="report [final].xlsx",
+        local_path="/l/r",
+        remote_path="/r/r",
+        size=1,
+        sha256="cc",
+        status="sent",
+    )
+    h.finish_run(run, "ok")
+    h.close()
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert str(app.query_one(JobsPanel).get_row_at(0)[0]) == "weekly [/old]"
+        app._apply_filter("report*")
+        await pilot.pause()
+        panel = app.query_one(HistoryPanel)
+        assert panel.mode == "files" and panel.row_count == 1
+        assert str(panel.get_row_at(0)[2]) == "report [final].xlsx"
+        app._apply_filter("[bold]x")
+        await pilot.pause()
+        assert "[bold]x" in str(panel.border_title)

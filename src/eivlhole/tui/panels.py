@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual.binding import Binding
 from textual.widgets import DataTable
 
@@ -23,7 +24,7 @@ class Panel(DataTable):
         current = self.cursor_row
         self.clear()
         for row, key in zip(rows, keys, strict=True):
-            self.add_row(*row, key=key)
+            self.add_row(*(Text(str(value)) for value in row), key=key)  # never markup
         if rows:
             self.move_cursor(row=min(current, len(rows) - 1))
 

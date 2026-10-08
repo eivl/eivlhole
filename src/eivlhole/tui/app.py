@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from rich.markup import escape
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult, SuspendNotSupported
@@ -167,7 +168,7 @@ class EivlholeApp(App[None]):
                 ],
                 [f"run:{r.id}" for r in runs],
             )
-        panel.border_title = f"3 History ({self.filter.describe()})"
+        panel.border_title = escape(f"3 History ({self.filter.describe()})")
 
     # --- output helpers -----------------------------------------------
 

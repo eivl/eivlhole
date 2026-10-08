@@ -11,7 +11,7 @@ from pathlib import Path
 import asyncssh
 
 from eivlhole.errors import CodeNotFound, MailboxError
-from eivlhole.mailbox.base import Manifest, ProgressFn, validate_relpath
+from eivlhole.mailbox.base import Manifest, ProgressFn, sanitize_text, validate_relpath
 from eivlhole.mailbox.codes import generate_code
 
 log = logging.getLogger(__name__)
@@ -200,6 +200,6 @@ class SftpMailbox:
     async def failure(self, transfer_id: str) -> str | None:
         try:
             async with self.sftp.open(self.remote_path(transfer_id, FAILED), "rb") as f:
-                return (await f.read()).decode("utf-8", errors="replace")
+                return sanitize_text((await f.read()).decode("utf-8", errors="replace"))
         except asyncssh.SFTPError:
             return None
