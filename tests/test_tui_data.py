@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -71,6 +71,7 @@ def test_host_rows_trusted_flag(tmp_path):
     assert rows[0] == data.HostRow("drop", "10.0.0.5", 2222, "eivlhole", False, True)
     kh.write_text("[10.0.0.5]:2222 ssh-ed25519 AAAA\n")
     assert data.host_rows(cfg, kh)[0].trusted is True
+    assert "pinned" in data.host_detail(cfg, "drop", kh)
 
 
 def test_details(tmp_path):
@@ -130,3 +131,55 @@ def test_run_and_file_rows_use_filter(tmp_path):
     ]
     assert len(data.file_rows(h, data.HistoryFilter())) == 2
     h.close()
+
+
+def test_parse_history_filter_open_ended_ranges():
+    flt = data.parse_history_filter("..2026-10-07")
+    assert flt.since is None and flt.until == date(2026, 10, 7)
+    flt = data.parse_history_filter("2026-10-01..")
+    assert flt.since == date(2026, 10, 1) and flt.until is None
+    with pytest.raises(EivlholeError, match="start..end"):
+        data.parse_history_filter("..")
+
+
+def test_file_rows_date_filters_use_history(tmp_path):
+    h = History(tmp_path / "h.sqlite")
+    rid = h.start_run("job", job="reports", host="drop")
+    old_id = h.add_file(
+        rid,
+        direction="out",
+        filename="old.csv",
+        local_path="",
+        remote_path="",
+        size=1,
+        sha256="",
+        status="sent",
+    )
+    h.add_file(
+        rid,
+        direction="out",
+        filename="new.csv",
+        local_path="",
+        remote_path="",
+        size=1,
+        sha256="",
+        status="sent",
+    )
+    yesterday = datetime.now(UTC) - timedelta(days=1)
+    h._conn.execute("UPDATE files SET ts=? WHERE id=?", (yesterday.isoformat(), old_id))
+    h._conn.commit()
+    assert [f.filename for f in data.file_rows(h, data.parse_history_filter("yesterday"))] == [
+        "old.csv"
+    ]
+    assert [f.filename for f in data.file_rows(h, data.parse_history_filter("today"))] == [
+        "new.csv"
+    ]
+    names = [f.filename for f in data.file_rows(h, data.parse_history_filter("2000-01-01..today"))]
+    assert sorted(names) == ["new.csv", "old.csv"]
+    h.close()
+
+
+def test_job_rows_uses_default_host_when_job_host_is_none():
+    cfg = make_config()
+    assert cfg.jobs["reports"].host is None
+    assert data.job_rows(cfg)[0].host == "drop"

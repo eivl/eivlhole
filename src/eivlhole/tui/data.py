@@ -11,6 +11,7 @@ import tomli_w
 from eivlhole.cli.history_cmd import _local as fmt_local
 from eivlhole.cli.run_cmd import parse_date
 from eivlhole.config import Config, to_dict
+from eivlhole.errors import EivlholeError
 from eivlhole.history import FileRecord, History, RunRecord
 from eivlhole.ssh.client import find_pinned, target_from_host
 
@@ -70,7 +71,10 @@ def parse_history_filter(text: str) -> HistoryFilter:
     for token in text.split():
         if ".." in token:
             start, _, end = token.partition("..")
-            flt.since, flt.until = parse_date(start), parse_date(end)
+            if not start and not end:
+                raise EivlholeError("range needs at least one date: start..end")
+            flt.since = parse_date(start) if start else None
+            flt.until = parse_date(end) if end else None
         elif _looks_like_date(token):
             flt.on = parse_date(token)
         else:
