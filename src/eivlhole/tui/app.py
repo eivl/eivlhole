@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -14,16 +15,20 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, ProgressBar, RichLog, Static
 
-from eivlhole import paths
+from eivlhole import paths, transfer
 from eivlhole.cli.config_cmd import _editor_command as editor_command
+from eivlhole.cli.transfer_cmd import format_size
 from eivlhole.config import Config, load_config
 from eivlhole.errors import EivlholeError
 from eivlhole.history import FileRecord, History
+from eivlhole.jobs.runner import run_job
+from eivlhole.mailbox.base import Manifest
+from eivlhole.mailbox.sftp import SftpMailbox
 from eivlhole.ssh import keys
-from eivlhole.ssh.client import target_from_host
+from eivlhole.ssh.client import sftp, target_from_host
 from eivlhole.tui import data
 from eivlhole.tui.panels import HistoryPanel, HostsPanel, JobsPanel
-from eivlhole.tui.screens import HelpScreen, TextPrompt
+from eivlhole.tui.screens import ConfirmScreen, HelpScreen, TextPrompt
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +41,10 @@ class EivlholeApp(App[None]):
         Binding("2", "focus_panel('hosts')", "Hosts"),
         Binding("3", "focus_panel('history')", "History"),
         Binding("slash", "filter", "Filter"),
+        Binding("r", "run_job", "Run job"),
+        Binding("d", "dry_run", "Dry run"),
+        Binding("s", "send", "Send"),
+        Binding("R", "receive", "Receive"),
         Binding("e", "edit_config", "Edit config"),
         Binding("t", "test_host", "Test host"),
         Binding("question_mark", "help", "Help"),
@@ -50,6 +59,7 @@ class EivlholeApp(App[None]):
         self.filter_text = ""
         self.config_error: str | None = None
         self.file_records: dict[int, FileRecord] = {}
+        self.poll: float = 2.0
 
     # --- layout -------------------------------------------------------
 
@@ -290,3 +300,181 @@ class EivlholeApp(App[None]):
             log.exception("test host failed")
             self.set_status(f"test {name} failed: {exc}", error=True)
             return
+
+    # --- progress -----------------------------------------------------
+
+    def _progress(self, name: str, done: int, total: int) -> None:
+        bar = self.query_one("#progress", ProgressBar)
+        bar.update(total=max(total, 1), progress=done)
+        self.set_status(f"{name}: {format_size(done)} / {format_size(total)}")
+
+    def _reset_progress(self) -> None:
+        self.query_one("#progress", ProgressBar).update(total=100, progress=0)
+
+    def _report_failure(self, what: str, exc: BaseException) -> None:
+        text = str(exc) or type(exc).__name__
+        self.set_status(f"{what}: {text}", error=True)
+        self.write_log(f"{what}: {text}")
+
+    # --- jobs ---------------------------------------------------------
+
+    def action_run_job(self) -> None:
+        self._start_job(dry_run=False)
+
+    def action_dry_run(self) -> None:
+        self._start_job(dry_run=True)
+
+    def _start_job(self, *, dry_run: bool) -> None:
+        name = self.selected_job()
+        if not name:
+            self.set_status("no job selected; add one with `eivlhole jobs add`", error=True)
+            return
+        self.run_job_worker(name, dry_run)
+
+    @work(exclusive=True, group="job")
+    async def run_job_worker(self, name: str, dry_run: bool) -> None:
+        self._reset_progress()
+        self.set_status(f"running {name}{' (dry run)' if dry_run else ''}...")
+        try:
+            result = await run_job(
+                name,
+                self.config,
+                history=self.history,
+                dry_run=dry_run,
+                known_hosts=paths.known_hosts_file(),
+                progress=self._progress,
+            )
+        except EivlholeError as exc:
+            self._report_failure(f"run {name}", exc)
+            return
+        except Exception as exc:  # noqa: BLE001 - a worker must never crash the app
+            log.exception("run_job failed")
+            self._report_failure(f"run {name}", exc)
+            return
+        for w in result.warnings:
+            self.write_log(f"warning: {w}")
+        if result.status == "skipped":
+            self.set_status(f"{name} skipped: {result.reason}")
+            self.write_log(f"{name}: skipped ({result.reason})")
+        elif result.status == "dry-run":
+            pending = [o for o in result.outcomes if o.status == "pending"]
+            self.write_log(f"{name}: would send {len(pending)} file(s)")
+            for o in result.outcomes:
+                self.write_log(f"  {o.local} -> {o.remote}" + (f"  ({o.error})" if o.error else ""))
+            self.set_status(f"{name}: dry run, {len(pending)} file(s)")
+        else:
+            for o in result.outcomes:
+                self.write_log(
+                    f"  {o.status:6} {o.local.name}" + (f"  ({o.error})" if o.error else "")
+                )
+            self.set_status(
+                f"{name}: {result.status}, {len(result.sent)} sent, {len(result.failed)} failed",
+                error=result.status != "ok",
+            )
+        self.populate_history()
+
+    # --- send ---------------------------------------------------------
+
+    def action_send(self) -> None:
+        self.push_screen(
+            TextPrompt(
+                "Send: file or directory paths (quote paths with spaces)",
+                placeholder="C:/reports/summary.xlsx",
+            ),
+            callback=self._start_send,
+        )
+
+    def _start_send(self, text: str | None) -> None:
+        if not text:
+            return
+        self.send_worker(text)
+
+    @work(group="send")
+    async def send_worker(self, text: str) -> None:
+        self._reset_progress()
+        try:
+            local_paths = [Path(p).expanduser() for p in shlex.split(text, posix=True)]
+            transfer.collect_files(local_paths)
+            host = self.config.host_for(None)
+            target = target_from_host(host)
+            self.set_status(f"sending to {host.name}...")
+            async with sftp(target, known_hosts=paths.known_hosts_file(), prompt_trust=None) as s:
+                mailbox = SftpMailbox(s, self.config.defaults.drop_root)
+                result = await transfer.send(
+                    local_paths,
+                    mailbox,
+                    history=self.history,
+                    host_name=host.name,
+                    words=self.config.defaults.code_words,
+                    progress=self._progress,
+                )
+                self.write_log(f"Code: {result.code}  ({len(result.files)} file(s))")
+                self.write_log(f"On the other side: eivlhole receive {result.code}")
+                self.set_status(f"sent; code {result.code}; waiting for the receiver")
+                self.populate_history()
+                await transfer.wait_for_receipt(
+                    mailbox,
+                    result.transfer_id,
+                    poll=self.poll,
+                    on_state=lambda st: self.write_log(f"{result.code}: {st}"),
+                )
+                self.set_status(f"{result.code} received")
+        except EivlholeError as exc:
+            self._report_failure("send", exc)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("send failed")
+            self._report_failure("send", exc)
+        finally:
+            self.populate_history()
+
+    # --- receive ------------------------------------------------------
+
+    def action_receive(self) -> None:
+        self.push_screen(
+            TextPrompt("Receive: code from the sender", placeholder="7-tunnel-stairway-glucose"),
+            callback=self._start_receive,
+        )
+
+    def _start_receive(self, text: str | None) -> None:
+        if not text:
+            return
+        self.receive_worker(text)
+
+    @work(group="receive")
+    async def receive_worker(self, code: str) -> None:
+        self._reset_progress()
+        out_dir = Path(self.config.defaults.receive_dir).expanduser()
+
+        async def confirm(manifest: Manifest) -> bool:
+            body = "\n".join(f"{e.path}  {format_size(e.size)}" for e in manifest.files)
+            total = format_size(manifest.total_size)
+            body += f"\n\n{len(manifest.files)} file(s), {total} from {manifest.sender}"
+            return await self.push_screen_wait(
+                ConfirmScreen(f"Receive into {out_dir.resolve()}?", body)
+            )
+
+        try:
+            host = self.config.host_for(None)
+            target = target_from_host(host)
+            self.set_status(f"receiving {code}...")
+            async with sftp(target, known_hosts=paths.known_hosts_file(), prompt_trust=None) as s:
+                mailbox = SftpMailbox(s, self.config.defaults.drop_root)
+                result = await transfer.receive(
+                    code,
+                    mailbox,
+                    out_dir,
+                    history=self.history,
+                    host_name=host.name,
+                    confirm=confirm,
+                    progress=self._progress,
+                )
+            for p in result.files:
+                self.write_log(f"received {p}")
+            self.set_status(f"{len(result.files)} file(s) received into {out_dir.resolve()}")
+        except EivlholeError as exc:
+            self._report_failure("receive", exc)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("receive failed")
+            self._report_failure("receive", exc)
+        finally:
+            self.populate_history()
