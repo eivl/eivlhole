@@ -19,7 +19,8 @@ eivlhole keys
   s             send files (asks path)    R   receive (asks code)
   t             test selected host        e   edit config in $EDITOR
   /             filter history: name or glob, a date, or start..end
-  ?             this help                 q   quit
+  g             refresh config/history    c   cancel running operations
+  ?             this help                 q   quit (asks if busy)
 
 Host trust is never prompted here: run `eivlhole hosts trust NAME` in a shell.
 """
