@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import sqlite3
 import subprocess
@@ -31,6 +32,15 @@ from eivlhole.tui.panels import HistoryPanel, HostsPanel, JobsPanel
 from eivlhole.tui.screens import ConfirmScreen, HelpScreen, TextPrompt
 
 log = logging.getLogger(__name__)
+
+
+def split_paths(text: str) -> list[Path]:
+    """Split user-typed paths; keep backslashes on Windows, honour quotes on both."""
+    windows = os.name == "nt"
+    tokens = shlex.split(text, posix=not windows)
+    if windows:
+        tokens = [t[1:-1] if len(t) >= 2 and t[0] == t[-1] == '"' else t for t in tokens]
+    return [Path(t).expanduser() for t in tokens]
 
 
 class EivlholeApp(App[None]):
@@ -329,9 +339,12 @@ class EivlholeApp(App[None]):
         if not name:
             self.set_status("no job selected; add one with `eivlhole jobs add`", error=True)
             return
+        if any(w.group == "job" and w.is_running for w in self.workers):
+            self.set_status("a job is already running; wait for it to finish", error=True)
+            return
         self.run_job_worker(name, dry_run)
 
-    @work(exclusive=True, group="job")
+    @work(group="job")
     async def run_job_worker(self, name: str, dry_run: bool) -> None:
         self._reset_progress()
         self.set_status(f"running {name}{' (dry run)' if dry_run else ''}...")
@@ -344,34 +357,37 @@ class EivlholeApp(App[None]):
                 known_hosts=paths.known_hosts_file(),
                 progress=self._progress,
             )
+            for w in result.warnings:
+                self.write_log(f"warning: {w}")
+            if result.status == "skipped":
+                self.set_status(f"{name} skipped: {result.reason}")
+                self.write_log(f"{name}: skipped ({result.reason})")
+            elif result.status == "dry-run":
+                pending = [o for o in result.outcomes if o.status == "pending"]
+                self.write_log(f"{name}: would send {len(pending)} file(s)")
+                for o in result.outcomes:
+                    self.write_log(
+                        f"  {o.local} -> {o.remote}" + (f"  ({o.error})" if o.error else "")
+                    )
+                self.set_status(f"{name}: dry run, {len(pending)} file(s)")
+            else:
+                for o in result.outcomes:
+                    self.write_log(
+                        f"  {o.status:6} {o.local.name}" + (f"  ({o.error})" if o.error else "")
+                    )
+                counts = f"{len(result.sent)} sent, {len(result.failed)} failed"
+                self.set_status(
+                    f"{name}: {result.status}, {counts}",
+                    error=result.status != "ok",
+                )
         except EivlholeError as exc:
             self._report_failure(f"run {name}", exc)
-            return
         except Exception as exc:  # noqa: BLE001 - a worker must never crash the app
             log.exception("run_job failed")
             self._report_failure(f"run {name}", exc)
-            return
-        for w in result.warnings:
-            self.write_log(f"warning: {w}")
-        if result.status == "skipped":
-            self.set_status(f"{name} skipped: {result.reason}")
-            self.write_log(f"{name}: skipped ({result.reason})")
-        elif result.status == "dry-run":
-            pending = [o for o in result.outcomes if o.status == "pending"]
-            self.write_log(f"{name}: would send {len(pending)} file(s)")
-            for o in result.outcomes:
-                self.write_log(f"  {o.local} -> {o.remote}" + (f"  ({o.error})" if o.error else ""))
-            self.set_status(f"{name}: dry run, {len(pending)} file(s)")
-        else:
-            for o in result.outcomes:
-                self.write_log(
-                    f"  {o.status:6} {o.local.name}" + (f"  ({o.error})" if o.error else "")
-                )
-            self.set_status(
-                f"{name}: {result.status}, {len(result.sent)} sent, {len(result.failed)} failed",
-                error=result.status != "ok",
-            )
-        self.populate_history()
+        finally:
+            if self.is_running:
+                self.populate_history()
 
     # --- send ---------------------------------------------------------
 
@@ -393,7 +409,7 @@ class EivlholeApp(App[None]):
     async def send_worker(self, text: str) -> None:
         self._reset_progress()
         try:
-            local_paths = [Path(p).expanduser() for p in shlex.split(text, posix=True)]
+            local_paths = split_paths(text)
             transfer.collect_files(local_paths)
             host = self.config.host_for(None)
             target = target_from_host(host)
@@ -425,7 +441,8 @@ class EivlholeApp(App[None]):
             log.exception("send failed")
             self._report_failure("send", exc)
         finally:
-            self.populate_history()
+            if self.is_running:
+                self.populate_history()
 
     # --- receive ------------------------------------------------------
 
@@ -477,4 +494,5 @@ class EivlholeApp(App[None]):
             log.exception("receive failed")
             self._report_failure("receive", exc)
         finally:
-            self.populate_history()
+            if self.is_running:
+                self.populate_history()

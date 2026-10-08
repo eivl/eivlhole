@@ -199,3 +199,50 @@ async def test_navigation_during_worker(config_dir, ssh_server, client_key, tmp_
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert "ok" in status(app)
+
+
+def test_split_paths_windows_and_posix(monkeypatch):
+    monkeypatch.setattr(app_module.os, "name", "nt")
+    got = app_module.split_paths(r'"C:\Program Files\x\a.txt" D:\b.txt')
+    assert [str(p) for p in got] == [r"C:\Program Files\x\a.txt", r"D:\b.txt"]
+    monkeypatch.setattr(app_module.os, "name", "posix")
+    got = app_module.split_paths("'/home/me/a b.txt' /tmp/c")
+    assert [str(p) for p in got] == ["/home/me/a b.txt", "/tmp/c"]
+
+
+async def test_second_run_is_refused_while_running(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    write_full_config(ssh_server, client_key, tmp_path)
+    calls = []
+
+    async def slow_run_job(name, config, **kwargs):
+        calls.append(name)
+        await asyncio.sleep(0.5)
+        return runner.RunResult(job=name, host="drop", status="ok", exit_code=0)
+
+    monkeypatch.setattr(app_module, "run_job", slow_run_job)
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert "already running" in status(app)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(calls) == 1
+
+
+async def test_failed_job_refreshes_history(
+    config_dir, ssh_server, client_key, tmp_path, monkeypatch
+):
+    freeze_today(monkeypatch)
+    src, _ = write_full_config(ssh_server, client_key, tmp_path)
+    (src / "summary.xlsx").unlink()
+    app = EivlholeApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("r")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.query_one("#history").row_count == 1
